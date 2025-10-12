@@ -1,3 +1,4 @@
+import { Card, CardHeader, CardContent, CardTitle, CardDescription, CardFooter } from './components/ui/card';
 import React, { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -163,3 +164,4 @@ export default function App() {
     </div>
   );
 }
+
