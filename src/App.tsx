@@ -1,113 +1,165 @@
-import React, { useMemo, useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card'
-import { Input } from './components/ui/input'
-import { Label } from './components/ui/label'
+import React, { useState, useMemo } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
-const fmt = (n: number) =>
-  new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Number.isFinite(n) ? n : 0)
+const fmt = (n: number) => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(Number.isFinite(n) ? n : 0);
 
 function Num({ label, value, onChange, suffix }: { label: string; value: number; onChange: (v:number)=>void; suffix?: string }) {
   return (
-    <div style={{ marginBottom: 12 }}>
-      <Label style={{ display: 'block', fontSize: 12, color: '#555' }}>{label}</Label>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Input
-          inputMode="decimal"
-          value={Number.isFinite(value) ? value : 0}
-          onChange={(e)=> onChange(parseFloat(e.target.value.replace(',', '.')) || 0)}
-          style={{ padding: 8, border: '1px solid #ddd', borderRadius: 8, width: 220 }}
-        />
-        {suffix && <span style={{ fontSize: 12, color: '#777' }}>{suffix}</span>}
+    <div className="space-y-1">
+      <Label className="text-xs text-gray-600">{label}</Label>
+      <div className="flex items-center gap-2">
+        <Input inputMode="decimal" value={Number.isFinite(value) ? value : 0} onChange={(e)=> onChange(parseFloat(e.target.value.replace(',', '.')) || 0)} />
+        {suffix && <span className="text-xs text-gray-600 w-10">{suffix}</span>}
       </div>
     </div>
-  )
+  );
+}
+
+function Kpi({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border p-3 text-sm">
+      <div className="text-gray-600 text-xs">{label}</div>
+      <div className="text-base font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function Tabs({ active, onChange }: { active: 'sccv'|'eurl'; onChange: (k:'sccv'|'eurl')=>void }) {
+  return (
+    <div className="flex gap-2 mb-4">
+      {(['sccv','eurl'] as const).map(k => (
+        <button
+          key={k}
+          onClick={()=>onChange(k)}
+          className={`px-4 py-2 rounded-2xl border text-sm ${active===k ? 'bg-gray-900 text-white' : 'bg-white'}`}
+        >{k.toUpperCase()}</button>
+      ))}
+    </div>
+  );
+}
+
+// ---- Onglet EURL ----
+function CalculateurEURL() {
+  const [eurl, setEurl] = useState({
+    travaux: 360000,
+    matPct: 60,
+    moPct: 25,
+    caAutresPct: 15,
+    tauxIS: 25,
+  });
+
+  const caTotal = useMemo(() => eurl.travaux, [eurl.travaux]);
+  const coutMat = useMemo(() => (eurl.travaux * eurl.matPct) / 100, [eurl]);
+  const coutMO = useMemo(() => (eurl.travaux * eurl.moPct) / 100, [eurl]);
+  const coutAutres = useMemo(() => (eurl.travaux * eurl.caAutresPct) / 100, [eurl]);
+
+  const benefBrut = useMemo(() => caTotal - (coutMat + coutMO + coutAutres), [caTotal, coutMat, coutMO, coutAutres]);
+  const impots = useMemo(() => Math.max(benefBrut,0) * (eurl.tauxIS / 100), [benefBrut, eurl.tauxIS]);
+  const benefNet = useMemo(() => benefBrut - impots, [benefBrut, impots]);
+
+  return (
+    <Card className="mb-6 shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-lg">EURL – Rentabilité brute</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-3">
+          <Num label="Chiffre d'affaires (Travaux)" value={eurl.travaux} suffix="€" onChange={(v)=>setEurl({...eurl, travaux:v})} />
+          <Num label="% Matériaux" value={eurl.matPct} suffix="%" onChange={(v)=>setEurl({...eurl, matPct:v})} />
+          <Num label="% Main d'œuvre" value={eurl.moPct} suffix="%" onChange={(v)=>setEurl({...eurl, moPct:v})} />
+          <Num label="% Autres frais" value={eurl.caAutresPct} suffix="%" onChange={(v)=>setEurl({...eurl, caAutresPct:v})} />
+          <Num label="Taux IS" value={eurl.tauxIS} suffix="%" onChange={(v)=>setEurl({...eurl, tauxIS:v})} />
+
+          <Kpi label="Coût matériaux" value={`€ ${fmt(coutMat)}`} />
+          <Kpi label="Coût main d'œuvre" value={`€ ${fmt(coutMO)}`} />
+          <Kpi label="Autres coûts" value={`€ ${fmt(coutAutres)}`} />
+          <Kpi label="Bénéfice brut" value={`€ ${fmt(benefBrut)}`} />
+          <Kpi label="Impôts IS" value={`€ ${fmt(impots)}`} />
+          <Kpi label="Bénéfice net" value={`€ ${fmt(benefNet)}`} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---- Onglet SCCV ----
+function CalculateurSCCV() {
+  const [sccv, setSccv] = useState({
+    bien: 199000,
+    prixRenovM2: 900,
+    surfaceM2: 400,
+    prixReventeM2: 2150,
+    apportPct: 30,
+    chargeCreditPct: 5.8,
+    fraisDossierPct: 2,
+    fraisAgencePct: 5,
+    regimeHoldingPct: 1.25,
+  });
+
+  const travaux = useMemo(() => sccv.prixRenovM2 * sccv.surfaceM2, [sccv]);
+  const base = useMemo(() => sccv.bien + travaux, [sccv.bien, travaux]);
+  const apport = useMemo(() => (sccv.apportPct / 100) * base, [sccv.apportPct, base]);
+  const chargeCredit = useMemo(() => (base - apport) * (sccv.chargeCreditPct / 100), [base, apport, sccv.chargeCreditPct]);
+  const fraisDossier = useMemo(() => (base - apport) * (sccv.fraisDossierPct / 100), [base, apport, sccv.fraisDossierPct]);
+  const fraisAgence = useMemo(() => base * (sccv.fraisAgencePct / 100), [base, sccv.fraisAgencePct]);
+  const coutProjet = useMemo(() => sccv.bien + travaux + fraisAgence + fraisDossier + chargeCredit, [sccv.bien, travaux, fraisAgence, fraisDossier, chargeCredit]);
+  const totalApresApport = useMemo(() => coutProjet - apport, [coutProjet, apport]);
+
+  const prixRevente = useMemo(() => sccv.surfaceM2 * sccv.prixReventeM2, [sccv.surfaceM2, sccv.prixReventeM2]);
+  const benefBrut = useMemo(() => prixRevente - coutProjet + apport, [prixRevente, coutProjet, apport]);
+  const is15 = useMemo(() => Math.min(Math.max(benefBrut, 0), 42500) * 0.15, [benefBrut]);
+  const is25 = useMemo(() => Math.max(benefBrut - 42500, 0) * 0.25, [benefBrut]);
+  const impotsIS = useMemo(() => is15 + is25, [is15, is25]);
+  const netRevente = useMemo(() => benefBrut - impotsIS, [benefBrut, impotsIS]);
+  const tresorerieHolding = useMemo(() => netRevente * (1 - sccv.regimeHoldingPct / 100), [netRevente, sccv.regimeHoldingPct]);
+
+  const rendementBrutGlobal = useMemo(() => (benefBrut / totalApresApport) * 100, [benefBrut, totalApresApport]);
+  const rendementNetGlobal = useMemo(() => (netRevente / totalApresApport) * 100, [netRevente, totalApresApport]);
+  const rendementApport = useMemo(() => (apport > 0 ? (netRevente / apport) * 100 : 0), [netRevente, apport]);
+
+  return (
+    <Card className="mb-6 shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-lg">SCCV – Marchand de biens</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-3">
+          <Num label="Prix d'achat (Bien)" value={sccv.bien} suffix="€" onChange={(v)=>setSccv({...sccv, bien:v})} />
+          <Num label="Prix rénovation (€/m²)" value={sccv.prixRenovM2} suffix="€" onChange={(v)=>setSccv({...sccv, prixRenovM2:v})} />
+          <Num label="Surface" value={sccv.surfaceM2} suffix="m²" onChange={(v)=>setSccv({...sccv, surfaceM2:v})} />
+          <Num label="Prix revente (€/m²)" value={sccv.prixReventeM2} suffix="€" onChange={(v)=>setSccv({...sccv, prixReventeM2:v})} />
+          <Num label="Apport" value={sccv.apportPct} suffix="%" onChange={(v)=>setSccv({...sccv, apportPct:v})} />
+          <Num label="Charge crédit" value={sccv.chargeCreditPct} suffix="%" onChange={(v)=>setSccv({...sccv, chargeCreditPct:v})} />
+          <Num label="Frais dossier" value={sccv.fraisDossierPct} suffix="%" onChange={(v)=>setSccv({...sccv, fraisDossierPct:v})} />
+          <Num label="Frais d'agence" value={sccv.fraisAgencePct} suffix="%" onChange={(v)=>setSccv({...sccv, fraisAgencePct:v})} />
+          <Num label="Régime mère-fille holding" value={sccv.regimeHoldingPct} suffix="%" onChange={(v)=>setSccv({...sccv, regimeHoldingPct:v})} />
+
+          <Kpi label="Travaux (calculés)" value={`€ ${fmt(travaux)}`} />
+          <Kpi label="Coût projet (après apport)" value={`€ ${fmt(totalApresApport)}`} />
+          <Kpi label="Prix de revente" value={`€ ${fmt(prixRevente)}`} />
+          <Kpi label="Marge brute (base IS)" value={`€ ${fmt(benefBrut)}`} />
+          <Kpi label="IS total" value={`€ ${fmt(impotsIS)}`} />
+          <Kpi label="Net à la revente" value={`€ ${fmt(netRevente)}`} />
+          <Kpi label="Trésorerie holding" value={`€ ${fmt(tresorerieHolding)}`} />
+        </div>
+        <div className="border-t mt-4 pt-4 grid grid-cols-2 gap-3">
+          <Kpi label="Rendement brut projet global" value={`${fmt(rendementBrutGlobal)} %`} />
+          <Kpi label="Rendement net projet global" value={`${fmt(rendementNetGlobal)} %`} />
+          <Kpi label="Net sur apport (effet de levier)" value={`${fmt(rendementApport)} %`} />
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function App() {
-  // Entrées principales
-  const [prix, setPrix] = useState(150000)
-  const [frais, setFrais] = useState(10000)
-  const [travaux, setTravaux] = useState(60000)
-  const [apport, setApport] = useState(20000)
-  const [taux, setTaux] = useState(4.2) // % annuel
-  const [duree, setDuree] = useState(20) // années
-  const [margeCiblePct, setMargeCiblePct] = useState(12) // % du coût total
-
-  const coutTotal = useMemo(()=> prix + frais + travaux, [prix, frais, travaux])
-  const emprunt = useMemo(()=> Math.max(coutTotal - apport, 0), [coutTotal, apport])
-
-  // Mensualité (amortissement classique)
-  const mensualite = useMemo(()=> {
-    const i = (taux/100) / 12
-    const n = duree * 12
-    if (i === 0) return emprunt / n
-    return emprunt * (i * Math.pow(1+i, n)) / (Math.pow(1+i, n) - 1)
-  }, [emprunt, taux, duree])
-
-  const prixDeVenteCible = useMemo(()=> Math.ceil(coutTotal * (1 + margeCiblePct/100)), [coutTotal, margeCiblePct])
-  const margeBrute = useMemo(()=> Math.max(prixDeVenteCible - coutTotal, 0), [prixDeVenteCible, coutTotal])
-  const coutMensuel = useMemo(()=> mensualite, [mensualite])
-
+  const [tab, setTab] = useState<'sccv'|'eurl'>('sccv');
   return (
-    <div style={{ maxWidth: 980, margin: '0 auto', padding: 16 }}>
-      <h1 style={{ fontSize: 22, marginBottom: 8 }}>Appli Rentabilité Immo – Version Défilante (prototype)</h1>
-      <p style={{ color: '#555', marginBottom: 24 }}>Renseigne les paramètres puis fais défiler pour voir les KPI. Tout est calculé en direct.</p>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <Card>
-          <CardHeader><CardTitle>Acquisition & travaux</CardTitle></CardHeader>
-          <CardContent>
-            <Num label="Prix du bien (€)" value={prix} onChange={setPrix} suffix="€" />
-            <Num label="Frais (notaire, agence...) (€)" value={frais} onChange={setFrais} suffix="€" />
-            <Num label="Travaux (€)" value={travaux} onChange={setTravaux} suffix="€" />
-            <div style={{ marginTop: 12, fontSize: 14 }}>
-              <strong>Coût total :</strong> {fmt(coutTotal)} €
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle>Financement</CardTitle></CardHeader>
-          <CardContent>
-            <Num label="Apport (€)" value={apport} onChange={setApport} suffix="€" />
-            <Num label="Taux (%)" value={taux} onChange={setTaux} suffix="%" />
-            <Num label="Durée (années)" value={duree} onChange={setDuree} />
-            <div style={{ marginTop: 12, fontSize: 14 }}>
-              <div><strong>Emprunt :</strong> {fmt(emprunt)} €</div>
-              <div><strong>Mensualité estimée :</strong> {fmt(coutMensuel)} € / mois</div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle>Objectif de marge</CardTitle></CardHeader>
-          <CardContent>
-            <Num label="Marge cible (%)" value={margeCiblePct} onChange={setMargeCiblePct} suffix="%" />
-            <div style={{ marginTop: 12, fontSize: 14 }}>
-              <div><strong>Prix de vente cible :</strong> {fmt(prixDeVenteCible)} €</div>
-              <div><strong>Marge brute :</strong> {fmt(margeBrute)} €</div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle>Résumé</CardTitle></CardHeader>
-          <CardContent>
-            <ul style={{ lineHeight: 1.8, paddingLeft: 16 }}>
-              <li>Coût total projet : <strong>{fmt(coutTotal)} €</strong></li>
-              <li>Apport : <strong>{fmt(apport)} €</strong></li>
-              <li>Emprunt : <strong>{fmt(emprunt)} €</strong></li>
-              <li>Mensualité : <strong>{fmt(coutMensuel)} €</strong></li>
-              <li>Prix de vente cible (marge {margeCiblePct}%): <strong>{fmt(prixDeVenteCible)} €</strong></li>
-              <li>Marge brute : <strong>{fmt(margeBrute)} €</strong></li>
-            </ul>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div style={{ marginTop: 32, fontSize: 12, color: '#777' }}>
-        <p>Prototype minimal. Ajuste librement les formules selon tes besoins (SCCV/EURL, frais détaillés, travaux, IS, etc.).</p>
-      </div>
+    <div className="min-h-screen bg-white text-gray-900 p-4 max-w-md mx-auto">
+      <Tabs active={tab} onChange={setTab} />
+      {tab==='sccv' ? <CalculateurSCCV/> : <CalculateurEURL/>}
     </div>
-  )
+  );
 }
