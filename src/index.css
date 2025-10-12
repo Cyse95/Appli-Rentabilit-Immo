@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* petits styles de confort pour que ça ressemble au canva
+   même si on ne passe pas de classes aux inputs/cards */
+@layer base {
+  body { @apply bg-white text-gray-900; }
+  input { @apply w-full border rounded-2xl px-3 py-2; }
+  label { @apply text-xs text-gray-600; }
+}
+
+@layer components {
+  .card { @apply rounded-2xl border p-3; }
+}
