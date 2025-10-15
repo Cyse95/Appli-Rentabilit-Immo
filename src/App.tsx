@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import html2pdf from "html2pdf.js";
+
 type TabKey = "sccv" | "eurl";
 
 type EURLState = {
@@ -33,6 +34,7 @@ const fmt = (n: number) =>
     Number.isFinite(n) ? n : 0
   );
 
+/* ---------------- UI helpers ---------------- */
 function Num({
   label,
   value,
@@ -121,6 +123,14 @@ function Tabs({
           {k.toUpperCase()}
         </button>
       ))}
+    </div>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-3">
+      <h2 className="text-xl font-semibold text-slate-900">{children}</h2>
     </div>
   );
 }
@@ -327,6 +337,8 @@ const DEFAULT_SCCV: SCCVState = {
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>("sccv");
+  const [exporting, setExporting] = useState(false);
+
   const [eurl, setEurl] = useState<EURLState>(() => {
     try { const raw = localStorage.getItem("calc:eurl"); return raw ? { ...DEFAULT_EURL, ...JSON.parse(raw) } : DEFAULT_EURL; }
     catch { return DEFAULT_EURL; }
@@ -349,28 +361,47 @@ export default function App() {
 
   // ----- EXPORT PDF -----
   const printableRef = useRef<HTMLDivElement>(null);
+
   const exportPDF = async () => {
-    if (!printableRef.current) return;
+    setExporting(true); // on rend visible la version "toutes sections"
+    await new Promise((r) => requestAnimationFrame(() => r(null))); // attendre le rendu
+
+    if (!printableRef.current) { setExporting(false); return; }
+
     const now = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
-    const filename = `SCCV-EURL_${tab}_${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}h${pad(now.getMinutes())}.pdf`;
+    const filename = `Dossier_SCCV-EURL_${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}h${pad(now.getMinutes())}.pdf`;
 
     const opt = {
-      margin: 10,
+      margin: 12,
       filename,
       image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+      html2canvas: { scale: 2.2, useCORS: true, backgroundColor: "#ffffff" },
       jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
       pagebreak: { mode: ["css", "legacy"] as const },
     };
 
     await (html2pdf() as any).set(opt).from(printableRef.current).save();
+    setExporting(false);
   };
+
+  /* Styles dédiés au mode PDF (lisibilité) */
+  const pdfStyles = `
+  .pdf-mode{ background:#fff; padding:16px; line-height:1.4; }
+  .pdf-mode h1{ font-size:20px; margin:0 0 8px; }
+  .pdf-mode h2{ font-size:18px; margin:8px 0 12px; }
+  .pdf-mode .rounded-2xl{ box-shadow:none!important; }
+  .pdf-mode .border-slate-200{ border-color:#e5e7eb!important; }
+  .pdf-mode input{ background:transparent!important; }
+  .pdf-mode [data-html2canvas-ignore]{ display:none!important; }
+  .html2pdf__page-break{ page-break-before:always; }
+  `;
 
   return (
     <div className="min-h-screen p-6 md:p-8 bg-gradient-to-b from-slate-50 to-zinc-100 text-slate-900">
       <div className="max-w-2xl mx-auto">
 
+        {/* Barre d'action (non incluse dans le PDF) */}
         <div className="flex items-center justify-between mb-4" data-html2canvas-ignore>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
@@ -381,23 +412,52 @@ export default function App() {
           <button
             onClick={exportPDF}
             className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm shadow hover:bg-indigo-700"
-            title="Exporter la vue actuelle en PDF"
+            title="Exporter tous les onglets en PDF"
           >
             Exporter en PDF
           </button>
         </div>
 
+        {/* Tabs écran */}
         <Tabs active={tab} onChange={setTab} />
 
-        <div ref={printableRef}>
-          {tab === "sccv" ? (
-            <CalculateurSCCV sccv={sccv} setSccv={setSccv} />
-          ) : (
-            <CalculateurEURL eurl={eurl} setEurl={setEurl} sccvTravaux={sccvTravaux} />
+        {/* ===== Zone visible écran OU dossier PDF ===== */}
+        <div ref={printableRef} className={exporting ? "pdf-mode" : ""}>
+          {/* styles spécifiques PDF */}
+          {exporting && <style>{pdfStyles}</style>}
+
+          {/* Écran : ne rendre que l’onglet actif */}
+          {!exporting && (
+            <>
+              {tab === "sccv" ? (
+                <CalculateurSCCV sccv={sccv} setSccv={setSccv} />
+              ) : (
+                <CalculateurEURL eurl={eurl} setEurl={setEurl} sccvTravaux={sccvTravaux} />
+              )}
+              <footer className="mt-6 text-[11px] text-slate-500">
+                Accent principal: <span className="text-indigo-600 font-medium">indigo</span>. Fond: slate/zinc.
+              </footer>
+            </>
           )}
-          <footer className="mt-6 text-[11px] text-slate-500">
-            Accent principal: <span className="text-indigo-600 font-medium">indigo</span>. Fond: slate/zinc.
-          </footer>
+
+          {/* Export PDF : rendre TOUT */}
+          {exporting && (
+            <>
+              <h1>Dossier SCCV / EURL – Synthèse</h1>
+
+              <SectionTitle>SCCV – Marchand de biens</SectionTitle>
+              <CalculateurSCCV sccv={sccv} setSccv={setSccv} />
+
+              <div className="html2pdf__page-break" />
+
+              <SectionTitle>EURL – Rentabilité brute</SectionTitle>
+              <CalculateurEURL eurl={eurl} setEurl={setEurl} sccvTravaux={sccvTravaux} />
+
+              <div className="mt-6 text-[11px] text-slate-500">
+                Généré automatiquement – {new Date().toLocaleDateString("fr-FR")} {new Date().toLocaleTimeString("fr-FR", {hour:"2-digit",minute:"2-digit"})}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
