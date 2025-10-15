@@ -4,11 +4,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 /*
-  Ajouts:
-  - Champ URL sous les titres (SCCV & EURL)
-  - Checkbox EURL: lier/délier "Travaux" au calcul SCCV
-  - Alignement des KPIs SCCV par paires (grille propre)
-  - Thème pro (slate/zinc + indigo)
+  Preview CANVA – Ajout d'un champ URL sous le titre + thème pro
+  --------------------------------------------------------------
+  - Nouveau champ texte "URL (optionnel)" juste sous chaque titre de carte (SCCV & EURL)
+  - Thème : fond dégradé slate -> zinc, cartes sur fond blanc, accents indigo
+  - Onglets modernisés
+  - Conserve toute la logique précédente :
+      * état remonté dans App, persistance localStorage
+      * sync par défaut EURL.travaux = SCCV.prixRenovM2 * surfaceM2
+        jusqu'à modification manuelle du champ EURL.travaux
 */
 
 type TabKey = "sccv" | "eurl";
@@ -45,13 +49,11 @@ function Num({
   value,
   onChange,
   suffix,
-  disabled,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   suffix?: string;
-  disabled?: boolean;
 }) {
   return (
     <div className="space-y-1">
@@ -64,7 +66,6 @@ function Num({
             onChange(parseFloat(e.target.value.replace(",", ".")) || 0)
           }
           className="bg-white/60"
-          disabled={disabled}
         />
         {suffix && (
           <span className="text-xs text-slate-500 w-10 select-none">{suffix}</span>
@@ -106,10 +107,6 @@ function Kpi({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-function KpiGhost() {
-  // placeholder pour garder l'alignement
-  return <div className="rounded-2xl border border-transparent p-3" />;
-}
 
 function Tabs({
   active,
@@ -135,17 +132,15 @@ function Tabs({
   );
 }
 
-/* ------------ Onglet EURL ------------ */
+/* ------------ Onglet EURL (contrôlé par App) ------------ */
 function CalculateurEURL({
   eurl,
   setEurl,
-  syncEurlTravaux,
-  setSyncEurlTravaux,
+  markTravauxTouched,
 }: {
   eurl: EURLState;
   setEurl: (s: EURLState) => void;
-  syncEurlTravaux: boolean;
-  setSyncEurlTravaux: (v: boolean) => void;
+  markTravauxTouched: () => void;
 }) {
   const caTotal = useMemo(() => eurl.travaux, [eurl.travaux]);
   const coutMat = useMemo(
@@ -177,34 +172,26 @@ function CalculateurEURL({
         <CardTitle className="text-lg font-semibold text-slate-900">
           EURL – Rentabilité brute
         </CardTitle>
-
-        <div className="mt-2 grid gap-2 md:grid-cols-2">
+        {/* Champ URL juste sous le titre */}
+        <div className="mt-2">
           <TextField
             label="URL (optionnel)"
             value={eurl.url}
             placeholder="Colle un lien (drive, dossier, annonce...)"
             onChange={(v) => setEurl({ ...eurl, url: v })}
           />
-          <label className="flex items-center gap-2 text-sm text-slate-700 mt-1">
-            <input
-              type="checkbox"
-              className="h-4 w-4 accent-indigo-600"
-              checked={syncEurlTravaux}
-              onChange={(e) => setSyncEurlTravaux(e.target.checked)}
-            />
-            Lier « Travaux » à la SCCV (auto)
-          </label>
         </div>
       </CardHeader>
-
       <CardContent>
         <div className="grid grid-cols-2 gap-3">
           <Num
             label="Chiffre d'affaires (Travaux)"
             value={eurl.travaux}
             suffix="€"
-            onChange={(v) => setEurl({ ...eurl, travaux: v })}
-            disabled={syncEurlTravaux}
+            onChange={(v) => {
+              markTravauxTouched();
+              setEurl({ ...eurl, travaux: v });
+            }}
           />
           <Num
             label="% Matériaux"
@@ -243,7 +230,7 @@ function CalculateurEURL({
   );
 }
 
-/* ------------ Onglet SCCV ------------ */
+/* ------------ Onglet SCCV (contrôlé par App) ------------ */
 function CalculateurSCCV({
   sccv,
   setSccv,
@@ -323,6 +310,7 @@ function CalculateurSCCV({
         <CardTitle className="text-lg font-semibold text-slate-900">
           SCCV – Marchand de biens
         </CardTitle>
+        {/* Champ URL juste sous le titre */}
         <div className="mt-2">
           <TextField
             label="URL (optionnel)"
@@ -333,22 +321,73 @@ function CalculateurSCCV({
         </div>
       </CardHeader>
       <CardContent>
-        {/* KPIs alignés par paires */}
         <div className="grid grid-cols-2 gap-3">
-          {/* Ligne 1 */}
+          <Num
+            label="Prix d'achat (Bien)"
+            value={sccv.bien}
+            suffix="€"
+            onChange={(v) => setSccv({ ...sccv, bien: v })}
+          />
+          <Num
+            label="Prix rénovation (€/m²)"
+            value={sccv.prixRenovM2}
+            suffix="€"
+            onChange={(v) => setSccv({ ...sccv, prixRenovM2: v })}
+          />
+          <Num
+            label="Surface"
+            value={sccv.surfaceM2}
+            suffix="m²"
+            onChange={(v) => setSccv({ ...sccv, surfaceM2: v })}
+          />
+          <Num
+            label="Prix revente (€/m²)"
+            value={sccv.prixReventeM2}
+            suffix="€"
+            onChange={(v) => setSccv({ ...sccv, prixReventeM2: v })}
+          />
+          <Num
+            label="Apport"
+            value={sccv.apportPct}
+            suffix="%"
+            onChange={(v) => setSccv({ ...sccv, apportPct: v })}
+          />
+          <Num
+            label="Charge crédit"
+            value={sccv.chargeCreditPct}
+            suffix="%"
+            onChange={(v) => setSccv({ ...sccv, chargeCreditPct: v })}
+          />
+          <Num
+            label="Frais dossier"
+            value={sccv.fraisDossierPct}
+            suffix="%"
+            onChange={(v) => setSccv({ ...sccv, fraisDossierPct: v })}
+          />
+          <Num
+            label="Frais d'agence"
+            value={sccv.fraisAgencePct}
+            suffix="%"
+            onChange={(v) => setSccv({ ...sccv, fraisAgencePct: v })}
+          />
+          <Num
+            label="Régime mère-fille holding"
+            value={sccv.regimeHoldingPct}
+            suffix="%"
+            onChange={(v) => setSccv({ ...sccv, regimeHoldingPct: v })}
+          />
+
           <Kpi label="Travaux (calculés)" value={`€ ${fmt(travaux)}`} />
+          <Kpi
+            label="Coût projet (après apport)"
+            value={`€ ${fmt(totalApresApport)}`}
+          />
           <Kpi label="Prix de revente" value={`€ ${fmt(prixRevente)}`} />
-          {/* Ligne 2 */}
-          <Kpi label="Coût projet (après apport)" value={`€ ${fmt(totalApresApport)}`} />
           <Kpi label="Marge brute (base IS)" value={`€ ${fmt(benefBrut)}`} />
-          {/* Ligne 3 */}
           <Kpi label="IS total" value={`€ ${fmt(impotsIS)}`} />
           <Kpi label="Net à la revente" value={`€ ${fmt(netRevente)}`} />
-          {/* Ligne 4 */}
           <Kpi label="Trésorerie holding" value={`€ ${fmt(tresorerieHolding)}`} />
-          <KpiGhost />
         </div>
-
         <div className="border-t mt-4 pt-4 grid grid-cols-2 gap-3">
           <Kpi
             label="Rendement brut projet global"
@@ -420,18 +459,10 @@ export default function App() {
     }
   });
 
-  // Checkbox: sync EURL.travaux avec SCCV.travaux calculés
-  const [syncEurlTravaux, setSyncEurlTravaux] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem("calc:eurlSync");
-      if (raw === null) return !hadEurlInStorage; // par défaut ON si pas d'anciennes valeurs
-      return JSON.parse(raw);
-    } catch {
-      return true;
-    }
-  });
+  const [eurlTravauxTouched, setEurlTravauxTouched] = useState<boolean>(
+    hadEurlInStorage
+  );
 
-  // Persistance
   useEffect(() => {
     try {
       localStorage.setItem("calc:eurl", JSON.stringify(eurl));
@@ -444,21 +475,14 @@ export default function App() {
     } catch {}
   }, [sccv]);
 
+  // Sync par défaut des travaux EURL
   useEffect(() => {
-    try {
-      localStorage.setItem("calc:eurlSync", JSON.stringify(syncEurlTravaux));
-    } catch {}
-  }, [syncEurlTravaux]);
-
-  // Sync contrôlée par la checkbox
-  useEffect(() => {
-    if (!syncEurlTravaux) return;
     const sccvTravaux = sccv.prixRenovM2 * sccv.surfaceM2;
-    if (eurl.travaux !== sccvTravaux) {
+    if (!eurlTravauxTouched && eurl.travaux !== sccvTravaux) {
       setEurl((prev) => ({ ...prev, travaux: sccvTravaux }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sccv.prixRenovM2, sccv.surfaceM2, syncEurlTravaux]);
+  }, [sccv.prixRenovM2, sccv.surfaceM2, eurlTravauxTouched]);
 
   return (
     <div className="min-h-screen p-6 md:p-8 bg-gradient-to-b from-slate-50 to-zinc-100 text-slate-900">
@@ -468,7 +492,7 @@ export default function App() {
             Calculateur Rentabilité – SCCV / EURL
           </h1>
           <p className="text-sm text-slate-600">
-            Version de prévisualisation (couleurs, URL, checkbox de liaison)
+            Version de prévisualisation (couleurs et champ URL)
           </p>
         </header>
 
@@ -479,8 +503,7 @@ export default function App() {
           <CalculateurEURL
             eurl={eurl}
             setEurl={setEurl}
-            syncEurlTravaux={syncEurlTravaux}
-            setSyncEurlTravaux={setSyncEurlTravaux}
+            markTravauxTouched={() => setEurlTravauxTouched(true)}
           />
         )}
 
