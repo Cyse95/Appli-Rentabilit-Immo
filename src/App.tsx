@@ -3,18 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-/*
-  Preview CANVA – Ajout d'un champ URL sous le titre + thème pro
-  --------------------------------------------------------------
-  - Nouveau champ texte "URL (optionnel)" juste sous chaque titre de carte (SCCV & EURL)
-  - Thème : fond dégradé slate -> zinc, cartes sur fond blanc, accents indigo
-  - Onglets modernisés
-  - Conserve toute la logique précédente :
-      * état remonté dans App, persistance localStorage
-      * sync par défaut EURL.travaux = SCCV.prixRenovM2 * surfaceM2
-        jusqu'à modification manuelle du champ EURL.travaux
-*/
-
 type TabKey = "sccv" | "eurl";
 
 type EURLState = {
@@ -24,6 +12,8 @@ type EURLState = {
   moPct: number;
   caAutresPct: number;
   tauxIS: number;
+  /** NEW: si true, l'utilisateur modifie manuellement; sinon, réplique la SCCV */
+  manualTravaux?: boolean;
 };
 
 type SCCVState = {
@@ -49,11 +39,13 @@ function Num({
   value,
   onChange,
   suffix,
+  disabled,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   suffix?: string;
+  disabled?: boolean;
 }) {
   return (
     <div className="space-y-1">
@@ -65,7 +57,9 @@ function Num({
           onChange={(e) =>
             onChange(parseFloat(e.target.value.replace(",", ".")) || 0)
           }
-          className="bg-white/60"
+          className={`bg-white/60 ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+          disabled={disabled}
+          readOnly={disabled}
         />
         {suffix && (
           <span className="text-xs text-slate-500 w-10 select-none">{suffix}</span>
@@ -136,11 +130,12 @@ function Tabs({
 function CalculateurEURL({
   eurl,
   setEurl,
-  markTravauxTouched,
+  sccvTravaux,
 }: {
   eurl: EURLState;
   setEurl: (s: EURLState) => void;
-  markTravauxTouched: () => void;
+  /** valeur calculée côté SCCV: prixRenovM2 * surfaceM2 */
+  sccvTravaux: number;
 }) {
   const caTotal = useMemo(() => eurl.travaux, [eurl.travaux]);
   const coutMat = useMemo(
@@ -166,12 +161,21 @@ function CalculateurEURL({
   );
   const benefNet = useMemo(() => benefBrut - impots, [benefBrut, impots]);
 
+  // Si le mode n'est PAS manuel, on réplique en continu la valeur SCCV
+  useEffect(() => {
+    if (!eurl.manualTravaux && eurl.travaux !== sccvTravaux) {
+      setEurl({ ...eurl, travaux: sccvTravaux });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sccvTravaux, eurl.manualTravaux]);
+
   return (
     <Card className="mb-6 shadow-sm border-slate-200 bg-white/90 backdrop-blur">
       <CardHeader className="pb-2">
         <CardTitle className="text-lg font-semibold text-slate-900">
           EURL – Rentabilité brute
         </CardTitle>
+
         {/* Champ URL juste sous le titre */}
         <div className="mt-2">
           <TextField
@@ -181,17 +185,39 @@ function CalculateurEURL({
             onChange={(v) => setEurl({ ...eurl, url: v })}
           />
         </div>
+
+        {/* NEW: Checkbox mode manuel / sync SCCV */}
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            id="chk-manual-travaux"
+            type="checkbox"
+            className="h-4 w-4 accent-indigo-600"
+            checked={!!eurl.manualTravaux}
+            onChange={(e) => {
+              const manual = e.target.checked;
+              if (manual) {
+                // passer en manuel: l'utilisateur pourra éditer librement
+                setEurl({ ...eurl, manualTravaux: true });
+              } else {
+                // repasser en auto: on resynchronise immédiatement puis on verrouille
+                setEurl({ ...eurl, manualTravaux: false, travaux: sccvTravaux });
+              }
+            }}
+          />
+          <Label htmlFor="chk-manual-travaux" className="text-xs text-slate-600">
+            Modifier manuellement le « CA (Travaux) » EURL (sinon réplique automatiquement la SCCV)
+          </Label>
+        </div>
       </CardHeader>
+
       <CardContent>
         <div className="grid grid-cols-2 gap-3">
           <Num
-            label="Chiffre d'affaires (Travaux)"
+            label={`Chiffre d'affaires (Travaux)${eurl.manualTravaux ? "" : " – répliqué SCCV"}`}
             value={eurl.travaux}
             suffix="€"
-            onChange={(v) => {
-              markTravauxTouched();
-              setEurl({ ...eurl, travaux: v });
-            }}
+            disabled={!eurl.manualTravaux}
+            onChange={(v) => setEurl({ ...eurl, travaux: v })}
           />
           <Num
             label="% Matériaux"
@@ -310,7 +336,6 @@ function CalculateurSCCV({
         <CardTitle className="text-lg font-semibold text-slate-900">
           SCCV – Marchand de biens
         </CardTitle>
-        {/* Champ URL juste sous le titre */}
         <div className="mt-2">
           <TextField
             label="URL (optionnel)"
@@ -415,6 +440,7 @@ const DEFAULT_EURL: EURLState = {
   moPct: 25,
   caAutresPct: 15,
   tauxIS: 25,
+  manualTravaux: false, // NEW: par défaut, réplique la SCCV
 };
 
 const DEFAULT_SCCV: SCCVState = {
@@ -432,14 +458,6 @@ const DEFAULT_SCCV: SCCVState = {
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>("sccv");
-
-  const hadEurlInStorage = (() => {
-    try {
-      return !!localStorage.getItem("calc:eurl");
-    } catch {
-      return false;
-    }
-  })();
 
   const [eurl, setEurl] = useState<EURLState>(() => {
     try {
@@ -459,10 +477,7 @@ export default function App() {
     }
   });
 
-  const [eurlTravauxTouched, setEurlTravauxTouched] = useState<boolean>(
-    hadEurlInStorage
-  );
-
+  // Persist
   useEffect(() => {
     try {
       localStorage.setItem("calc:eurl", JSON.stringify(eurl));
@@ -475,14 +490,19 @@ export default function App() {
     } catch {}
   }, [sccv]);
 
-  // Sync par défaut des travaux EURL
+  // valeur travaux calculée côté SCCV
+  const sccvTravaux = useMemo(
+    () => sccv.prixRenovM2 * sccv.surfaceM2,
+    [sccv.prixRenovM2, sccv.surfaceM2]
+  );
+
+  // Si on n'est pas en manuel, on synchronise en continu EURL.travaux
   useEffect(() => {
-    const sccvTravaux = sccv.prixRenovM2 * sccv.surfaceM2;
-    if (!eurlTravauxTouched && eurl.travaux !== sccvTravaux) {
+    if (!eurl.manualTravaux && eurl.travaux !== sccvTravaux) {
       setEurl((prev) => ({ ...prev, travaux: sccvTravaux }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sccv.prixRenovM2, sccv.surfaceM2, eurlTravauxTouched]);
+  }, [sccvTravaux, eurl.manualTravaux]);
 
   return (
     <div className="min-h-screen p-6 md:p-8 bg-gradient-to-b from-slate-50 to-zinc-100 text-slate-900">
@@ -503,7 +523,7 @@ export default function App() {
           <CalculateurEURL
             eurl={eurl}
             setEurl={setEurl}
-            markTravauxTouched={() => setEurlTravauxTouched(true)}
+            sccvTravaux={sccvTravaux}
           />
         )}
 
