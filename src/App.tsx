@@ -747,6 +747,25 @@ function CalculateurSCCV({
 }
 
 /* -------------------- App -------------------- */
+const DEFAULT_TRAVAUX: TravauxState = {
+  rows: [{ qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }],
+  tva: 0.10,
+  showAdvanced: false,
+};
+
+const [travaux, setTravaux] = useState<TravauxState>(() => {
+  try {
+    const raw = localStorage.getItem("calc:travaux");
+    return raw ? { ...DEFAULT_TRAVAUX, ...JSON.parse(raw) } : DEFAULT_TRAVAUX;
+  } catch {
+    return DEFAULT_TRAVAUX;
+  }
+});
+
+useEffect(() => {
+  try { localStorage.setItem("calc:travaux", JSON.stringify(travaux)); } catch {}
+}, [travaux]);
+
 const DEFAULT_EURL: EURLState = {
   url: "",
   travaux: 360000,
@@ -768,6 +787,24 @@ const DEFAULT_SCCV: SCCVState = {
   fraisDossierPct: 2,
   fraisAgencePct: 5,
   regimeHoldingPct: 1.25,
+};
+type ChiffrageRow = {
+  categorie?: string;   // A
+  sousPoste?: string;   // B
+  unite?: string;       // C
+  qte: number;          // D
+  prixUnitaire: number; // E
+  coeffLocal: number;   // F
+  totalHT: number;      // G
+  pct: number;          // H
+  niveau: "Par défaut" | "Bas" | "Moyen" | "Haut"; // I
+  commentaires?: string;// J
+};
+
+type TravauxState = {
+  rows: ChiffrageRow[];
+  tva: number;           // ex: 0.10
+  showAdvanced: boolean; // afficher H & J ?
 };
 
 export default function App() {
