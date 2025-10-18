@@ -7,8 +7,10 @@ import html2pdf from "html2pdf.js";
 /* -------------------------------------------------------
    Calculette investissement immo
    - Onglets : SCCV / EURL / TRAVAUX
-   - TRAVAUX : chiffrage compact + synthèse (pas de boutons export locaux)
-   - Export : bouton global "Export" (sélecteur de pages)
+   - TRAVAUX : liste compacte -> édition dans un drawer vertical
+   - Prix catalogue = "Moyen" uniquement
+   - Catalogue chargé live depuis Google Sheets (CSV)
+   - Export : bouton dans chaque carte (SCCV/EURL/Travaux)
 -------------------------------------------------------- */
 
 type TabKey = "sccv" | "eurl" | "travaux";
@@ -39,6 +41,31 @@ type SCCVState = {
   regimeHoldingPct: number;
 };
 
+type CatalogueItem = {
+  categorie: string;
+  sousPoste: string;
+  unite: string;
+  prix: { bas: number; moyen: number; haut: number };
+  note?: string;
+};
+
+type ChiffrageRow = {
+  categorie?: string;      // A
+  sousPoste?: string;      // B
+  unite?: string;          // C (auto)
+  qte: number;             // D
+  prixUnitaire: number;    // E (auto = "moyen")
+  coeffLocal: number;      // F
+  totalHT: number;         // G (auto)
+  commentaires?: string;   // J
+};
+
+type TravauxState = {
+  rows: ChiffrageRow[];
+  tva: number; // ex: 0.10
+};
+
+/* ---------- Utils ---------- */
 const fmt = (n: number) =>
   new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(
     Number.isFinite(n) ? n : 0
@@ -146,114 +173,79 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-/* ------------ CATALOGUE (en dur) ------------ */
-type CatalogueItem = {
-  categorie: string;
-  sousPoste: string;
-  unite: string;
-  prix: { bas: number; moyen: number; haut: number };
-  note?: string;
-};
+/* ---------- Catalogue (live depuis Google Sheets) ---------- */
+const SHEET_ID = "1RqfPjc9r-jFrZksmYb5tOwTfjKbgY8Sx4BORMsVwZXo";
+const SHEET_GID = "1104107230";
+// Export CSV direct (lecture seule)
+const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
 
-const CATS = [
-  "GROS ŒUVRE",
-  "SECOND ŒUVRE",
-  "FINITIONS",
-  "MENUISERIES",
-  "TOITURE",
-  "EXTÉRIEUR",
-  "DIVERS",
-] as const;
-
-const CATALOGUE: CatalogueItem[] = [
-  // GROS ŒUVRE
+const FALLBACK_CATALOGUE: CatalogueItem[] = [
   { categorie: "GROS ŒUVRE", sousPoste: "Démolition cloison simple", unite: "m²", prix: { bas: 10, moyen: 15, haut: 25 } },
-  { categorie: "GROS ŒUVRE", sousPoste: "Dépose revêtements sol", unite: "m²", prix: { bas: 5, moyen: 8, haut: 12 } },
-  { categorie: "GROS ŒUVRE", sousPoste: "Ouverture mur porteur + IPN", unite: "U", prix: { bas: 1500, moyen: 1800, haut: 2400 } },
-  { categorie: "GROS ŒUVRE", sousPoste: "Maçonnerie parpaings 20", unite: "m²", prix: { bas: 90, moyen: 120, haut: 150 } },
-  { categorie: "GROS ŒUVRE", sousPoste: "Dalle béton armée 10 cm", unite: "m²", prix: { bas: 90, moyen: 100, haut: 130 } },
-  { categorie: "GROS ŒUVRE", sousPoste: "Reprise fondations ponctuelles", unite: "ml", prix: { bas: 150, moyen: 220, haut: 300 } },
-  { categorie: "GROS ŒUVRE", sousPoste: "Seuil/linteau béton coulé", unite: "U", prix: { bas: 60, moyen: 80, haut: 100 } },
-  // SECOND ŒUVRE
-  { categorie: "SECOND ŒUVRE", sousPoste: "Isolation murs 120 mm", unite: "m²", prix: { bas: 40, moyen: 45, haut: 55 } },
-  { categorie: "SECOND ŒUVRE", sousPoste: "Cloison / doublage BA13", unite: "m²", prix: { bas: 55, moyen: 60, haut: 70 } },
-  { categorie: "SECOND ŒUVRE", sousPoste: "Plafond BA13 suspendu", unite: "m²", prix: { bas: 45, moyen: 55, haut: 65 } },
   { categorie: "SECOND ŒUVRE", sousPoste: "Électricité complète", unite: "m²", prix: { bas: 70, moyen: 80, haut: 90 } },
-  { categorie: "SECOND ŒUVRE", sousPoste: "Remplacement tableau électrique", unite: "U", prix: { bas: 400, moyen: 500, haut: 700 } },
-  { categorie: "SECOND ŒUVRE", sousPoste: "Réseau RJ45 (prise double)", unite: "U", prix: { bas: 60, moyen: 80, haut: 120 } },
-  { categorie: "SECOND ŒUVRE", sousPoste: "Plomberie - création SDE", unite: "U", prix: { bas: 3000, moyen: 4500, haut: 6000 } },
-  { categorie: "SECOND ŒUVRE", sousPoste: "Chauffe-eau thermodynamique", unite: "U", prix: { bas: 1600, moyen: 1900, haut: 2400 } },
-  // FINITIONS
   { categorie: "FINITIONS", sousPoste: "Peinture murs & plafonds", unite: "m²", prix: { bas: 14, moyen: 18, haut: 25 } },
-  { categorie: "FINITIONS", sousPoste: "Sols carrelage 60x60", unite: "m²", prix: { bas: 40, moyen: 45, haut: 60 } },
-  { categorie: "FINITIONS", sousPoste: "Sols parquet flottant", unite: "m²", prix: { bas: 30, moyen: 35, haut: 45 } },
-  { categorie: "FINITIONS", sousPoste: "Sols vinyle", unite: "m²", prix: { bas: 25, moyen: 30, haut: 40 } },
-  { categorie: "FINITIONS", sousPoste: "Faïence murale SDB", unite: "m²", prix: { bas: 40, moyen: 50, haut: 65 } },
-  { categorie: "FINITIONS", sousPoste: "Cuisine équipée (pose incluse)", unite: "U", prix: { bas: 3000, moyen: 4500, haut: 6000 } },
-  { categorie: "FINITIONS", sousPoste: "Escalier bois/acier", unite: "U", prix: { bas: 3000, moyen: 4500, haut: 6000 } },
-  // MENUISERIES
   { categorie: "MENUISERIES", sousPoste: "Fenêtre PVC DV 120x135", unite: "U", prix: { bas: 350, moyen: 400, haut: 500 } },
-  { categorie: "MENUISERIES", sousPoste: "Porte intérieure alvéolaire", unite: "U", prix: { bas: 100, moyen: 120, haut: 150 } },
-  { categorie: "MENUISERIES", sousPoste: "Porte d’entrée acier isolée", unite: "U", prix: { bas: 1000, moyen: 1200, haut: 1400 } },
-  { categorie: "MENUISERIES", sousPoste: "Baie vitrée alu coulissante 2V", unite: "U", prix: { bas: 1500, moyen: 1800, haut: 2200 } },
-  // TOITURE
-  { categorie: "TOITURE", sousPoste: "Réfection couverture tuiles", unite: "m²", prix: { bas: 90, moyen: 110, haut: 130 } },
-  { categorie: "TOITURE", sousPoste: "Charpente partielle", unite: "m²", prix: { bas: 110, moyen: 140, haut: 180 } },
-  { categorie: "TOITURE", sousPoste: "Isolation combles soufflée 300mm", unite: "m²", prix: { bas: 30, moyen: 35, haut: 45 } },
-  { categorie: "TOITURE", sousPoste: "Fenêtre de toit (Velux)", unite: "U", prix: { bas: 700, moyen: 850, haut: 1100 } },
-  // EXTÉRIEUR
-  { categorie: "EXTÉRIEUR", sousPoste: "Façade enduit gratté fin", unite: "m²", prix: { bas: 55, moyen: 60, haut: 70 } },
-  { categorie: "EXTÉRIEUR", sousPoste: "Isolation thermique par l’extérieur", unite: "m²", prix: { bas: 140, moyen: 160, haut: 190 } },
-  { categorie: "EXTÉRIEUR", sousPoste: "VRD / terrassement", unite: "m³", prix: { bas: 35, moyen: 40, haut: 50 } },
-  { categorie: "EXTÉRIEUR", sousPoste: "Allée béton désactivé", unite: "m²", prix: { bas: 60, moyen: 80, haut: 100 } },
-  { categorie: "EXTÉRIEUR", sousPoste: "Clôture rigide 1,50 m", unite: "ml", prix: { bas: 60, moyen: 75, haut: 100 } },
-  { categorie: "EXTÉRIEUR", sousPoste: "Portail motorisé alu 3 m", unite: "U", prix: { bas: 2000, moyen: 2500, haut: 3200 } },
-  // DIVERS
-  { categorie: "DIVERS", sousPoste: "Étude structure (IPN, etc.)", unite: "U", prix: { bas: 700, moyen: 900, haut: 1200 } },
-  { categorie: "DIVERS", sousPoste: "Étude thermique / DPE projet", unite: "U", prix: { bas: 300, moyen: 500, haut: 700 } },
-  { categorie: "DIVERS", sousPoste: "Bennes / évacuation déchets", unite: "m³", prix: { bas: 30, moyen: 40, haut: 60 } },
 ];
 
-const SOUS_POSTES_BY_CAT: Record<string, CatalogueItem[]> = CATALOGUE.reduce((acc, it) => {
-  (acc[it.categorie] ||= []).push(it);
-  return acc;
-}, {} as Record<string, CatalogueItem[]>);
+/* Parse CSV simple (attendu colonnes : categorie, sousPoste, unite, bas, moyen, haut, note) */
+function parseCatalogueCsv(csv: string): CatalogueItem[] {
+  const rows = csv.split(/\r?\n/).filter(Boolean).map((l) => l.split(","));
+  if (!rows.length) return [];
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const idx = (name: string) => header.indexOf(name);
+  const iCat = idx("categorie");
+  const iSous = idx("sousposte") !== -1 ? idx("sousposte") : idx("sous-poste");
+  const iUnite = idx("unite") !== -1 ? idx("unite") : idx("unité");
+  const iBas = idx("bas");
+  const iMoy = idx("moyen");
+  const iHaut = idx("haut");
+  const iNote = idx("note");
 
-/* ------------ TRAVAUX types (état global + persistance) ------------ */
-type ChiffrageRow = {
-  categorie?: string;      // A
-  sousPoste?: string;      // B
-  unite?: string;          // C (auto)
-  qte: number;             // D
-  prixUnitaire: number;    // E (auto selon niveau)
-  coeffLocal: number;      // F
-  totalHT: number;         // G (auto)
-  pct: number;             // H (auto)
-  niveau: RowLevel;        // I
-  commentaires?: string;   // J
-};
+  const out: CatalogueItem[] = [];
+  for (let r = 1; r < rows.length; r++) {
+    const cells = rows[r];
+    const cat = cells[iCat]?.trim();
+    const sous = cells[iSous]?.trim();
+    const unite = cells[iUnite]?.trim() || "";
+    if (!cat || !sous) continue;
+    const bas = parseFloat((cells[iBas] || "").replace(",", ".")) || 0;
+    const moyen = parseFloat((cells[iMoy] || "").replace(",", ".")) || 0;
+    const haut = parseFloat((cells[iHaut] || "").replace(",", ".")) || 0;
+    const note = iNote >= 0 ? cells[iNote]?.trim() : undefined;
+    out.push({ categorie: cat, sousPoste: sous, unite, prix: { bas, moyen, haut }, note });
+  }
+  return out;
+}
 
-type TravauxState = {
-  rows: ChiffrageRow[];
-  tva: number;            // 0.10 = 10%
-};
-
-const DEFAULT_PAR_DEFAUT: Level = "Moyen";
-const DEFAULT_TVA = 0.10;
-
-/* ------------ Onglet TRAVAUX (Chiffrage + Synthèse) ------------ */
+/* ------------ Onglet TRAVAUX (Drawer vertical) ------------ */
 function TravauxTab({
   travaux,
   setTravaux,
-  chiffrageRef,
+  catalogue,
+  openExportSelector,
+  chiffrageAnchorRef,
   synthRef,
 }: {
   travaux: TravauxState;
   setTravaux: (t: TravauxState) => void;
-  chiffrageRef: React.RefObject<HTMLDivElement>;
+  catalogue: CatalogueItem[];
+  openExportSelector: () => void;
+  chiffrageAnchorRef: React.RefObject<HTMLDivElement>;
   synthRef: React.RefObject<HTMLDivElement>;
 }) {
   const { rows, tva } = travaux;
+
+  // indexation pour sélection
+  const CATS = useMemo(
+    () => Array.from(new Set(catalogue.map((c) => c.categorie))),
+    [catalogue]
+  );
+  const sousByCat = useMemo(() => {
+    const m: Record<string, CatalogueItem[]> = {};
+    catalogue.forEach((it) => {
+      (m[it.categorie] ||= []).push(it);
+    });
+    return m;
+  }, [catalogue]);
 
   const totalHT = useMemo(
     () => rows.reduce((s, r) => s + (Number.isFinite(r.totalHT) ? r.totalHT : 0), 0),
@@ -270,81 +262,80 @@ function TravauxTab({
   const ttva = useMemo(() => totalHT * tva, [totalHT, tva]);
   const ttc  = useMemo(() => totalHT + ttva, [totalHT, ttva]);
 
-  // --- recalcul d’une ligne ---
-  const recalcRow = (idx: number, base?: Partial<ChiffrageRow>) => {
-    const r = { ...rows[idx], ...base };
-    if (r.categorie && r.sousPoste) {
-      const item = SOUS_POSTES_BY_CAT[r.categorie]?.find((x) => x.sousPoste === r.sousPoste);
-      if (item) {
-        r.unite = item.unite;
-        const level: Level = r.niveau === "Par défaut" ? DEFAULT_PAR_DEFAUT : (r.niveau as Level);
-        r.prixUnitaire =
-          level === "Bas" ? item.prix.bas :
-          level === "Haut" ? item.prix.haut : item.prix.moyen;
-      }
+  // ----- Drawer state -----
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editIndex, setEditIndex] = useState<number | null>(null);
+  const emptyDraft: ChiffrageRow = { qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, commentaires: "" };
+  const [draft, setDraft] = useState<ChiffrageRow>(emptyDraft);
+
+  const openNew = () => {
+    setEditIndex(null);
+    setDraft(emptyDraft);
+    setDrawerOpen(true);
+  };
+  const openEdit = (i: number) => {
+    setEditIndex(i);
+    setDraft(rows[i]);
+    setDrawerOpen(true);
+  };
+  const closeDrawer = () => setDrawerOpen(false);
+
+  // recalcul en brouillon (utilise prix "moyen")
+  useEffect(() => {
+    if (!draft.categorie || !draft.sousPoste) return;
+    const item = sousByCat[draft.categorie]?.find((x) => x.sousPoste === draft.sousPoste);
+    if (!item) return;
+    const pu = item.prix.moyen || 0;
+    const q = Number(draft.qte) || 0;
+    const k = Number(draft.coeffLocal) || 1;
+    setDraft((d) => ({ ...d, unite: item.unite, prixUnitaire: pu, totalHT: q * pu * k }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.categorie, draft.sousPoste, draft.qte, draft.coeffLocal]);
+
+  const saveDraft = () => {
+    const row = { ...draft };
+    if (editIndex === null) {
+      setTravaux({ ...travaux, rows: [...rows, row] });
+    } else {
+      const copy = [...rows];
+      copy[editIndex] = row;
+      setTravaux({ ...travaux, rows: copy });
     }
-    const q = Number(r.qte) || 0;
-    const pu = Number(r.prixUnitaire) || 0;
-    const k = Number(r.coeffLocal) || 1;
-    r.totalHT = q * pu * k;
-
-    const copy = [...rows];
-    copy[idx] = r;
-    const sum = copy.reduce((s, x) => s + (Number.isFinite(x.totalHT) ? x.totalHT : 0), 0);
-    copy.forEach((x) => (x.pct = sum > 0 ? x.totalHT / sum : 0));
-    setTravaux({ ...travaux, rows: copy });
+    setDrawerOpen(false);
   };
 
-  const setCell = (idx: number, patch: Partial<ChiffrageRow>) => recalcRow(idx, patch);
-  const handleCatChange = (idx: number, cat?: string) => {
-    const firstSous = cat ? SOUS_POSTES_BY_CAT[cat]?.[0]?.sousPoste : undefined;
-    recalcRow(idx, { categorie: cat, sousPoste: firstSous, unite: undefined, prixUnitaire: 0 });
+  const removeRow = (i: number) => {
+    setTravaux({ ...travaux, rows: rows.filter((_, idx) => idx !== i) });
   };
-  const handleSousChange = (idx: number, sous?: string) => recalcRow(idx, { sousPoste: sous });
-  const handleLevelChange = (idx: number, lvl: RowLevel) => recalcRow(idx, { niveau: lvl });
-
-  const addRow = () => {
-    setTravaux({
-      ...travaux,
-      rows: [...rows, { qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }],
-    });
-  };
-  const removeRow = (i: number) => setTravaux({ ...travaux, rows: rows.filter((_, idx) => idx !== i) });
-  const duplicateRow = (i: number) => {
-    const copy = [...rows];
-    copy.splice(i + 1, 0, { ...copy[i] });
-    setTravaux({ ...travaux, rows: copy });
-  };
-
-  // styles compacts
-  const t = "text-[10px]";
-  const py = "py-1";
-  const px = "px-1.5";
-  const colsBase = "grid min-w-[980px] grid-cols-[13ch,20ch,6ch,7ch,11ch,8ch,12ch,9ch,13ch,1fr]";
-  const colsLg   = "lg:grid-cols-[14ch,22ch,7ch,8ch,12ch,9ch,13ch,10ch,14ch,1fr]";
-
-  const createAndOpen = () => addRow();
 
   return (
     <>
-      {/* CHIFFRAGE */}
-      <div ref={chiffrageRef}>
+      {/* CHIFFRAGE (liste minimaliste) */}
+      <div ref={chiffrageAnchorRef}>
         <Card className="mb-4 shadow-sm border-slate-200 bg-white/90 backdrop-blur">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-base font-semibold text-slate-900">
-              TRAVAUX – Chiffrage
-            </CardTitle>
-
-            {/* compteur gauche, bouton + à droite */}
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <div className="min-w-0 text-[12px] text-slate-600">
+          <CardHeader className="pb-1 flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base font-semibold text-slate-900">
+                TRAVAUX – Chiffrage
+              </CardTitle>
+              <div className="mt-1 min-w-0 text-[12px] text-slate-600">
                 Lignes : <span className="font-semibold text-slate-800">{rows.length}</span>
                 <span className="ml-3">
                   Total HT : <span className="font-semibold text-indigo-700">€ {fmt(totalHT)}</span>
                 </span>
               </div>
+            </div>
+            <div className="flex items-center gap-2">
               <button
-                onClick={createAndOpen}
+                onClick={openExportSelector}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs shadow hover:bg-indigo-700"
+                data-html2canvas-ignore
+                title="Export"
+              >
+                Export
+              </button>
+              <button
+                onClick={openNew}
                 className="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-slate-800 text-white text-sm hover:bg-slate-900"
                 data-html2canvas-ignore
                 aria-label="Ajouter une ligne"
@@ -354,140 +345,52 @@ function TravauxTab({
               </button>
             </div>
           </CardHeader>
-
           <CardContent className="pt-2">
-            <div className="overflow-x-auto">
-              {/* En-têtes A..J (alignés) */}
-              <div className={`${colsBase} ${colsLg} ${t} font-semibold text-slate-600 ${px}`}>
-                <div className="sticky left-0 bg-white z-10 pr-2">Catégorie (A)</div>
-                <div>Sous-poste (B)</div>
-                <div>Unité (C)</div>
-                <div>Qté (D)</div>
-                <div>Prix unitaire € (E)</div>
-                <div>Coeff (F)</div>
-                <div>Total HT € (G)</div>
-                <div>% total (H)</div>
-                <div>Niveau (I)</div>
-                <div>Commentaires (J)</div>
-              </div>
-
-              {/* Lignes */}
-              <div className="mt-1.5 space-y-1.5">
-                {rows.map((r, i) => {
-                  const sousList = r.categorie ? SOUS_POSTES_BY_CAT[r.categorie] ?? [] : [];
-                  return (
-                    <div
-                      key={i}
-                      className={`${colsBase} ${colsLg} items-center gap-1.5 bg-white rounded-lg border border-slate-200 ${px} ${py}`}
-                    >
-                      {/* Catégorie (sticky) */}
-                      <div className="sticky left-0 bg-white z-10 pr-2">
-                        <select
-                          className={`w-full rounded-md border border-slate-200 ${px} ${py} ${t} bg-white h-8`}
-                          value={r.categorie || ""}
-                          onChange={(e) => handleCatChange(i, e.target.value || undefined)}
-                        >
-                          <option value="">—</option>
-                          {CATS.map((c) => (
-                            <option key={c} value={c}>{c}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Sous-poste */}
-                      <div>
-                        <select
-                          className={`w-full rounded-md border border-slate-200 ${px} ${py} ${t} bg-white h-8`}
-                          value={r.sousPoste || ""}
-                          onChange={(e) => handleSousChange(i, e.target.value || undefined)}
-                          disabled={!r.categorie}
-                        >
-                          <option value="">{r.categorie ? "—" : "Choisir catégorie"}</option>
-                          {sousList.map((sp) => (
-                            <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Unité (auto) */}
-                      <div>
-                        <Input className={`bg-white/60 ${t} h-8`} value={r.unite ?? ""} readOnly />
-                      </div>
-
-                      {/* Qté */}
-                      <div>
-                        <Input
-                          inputMode="decimal"
-                          className={`bg-white/60 ${t} h-8`}
-                          value={Number.isFinite(r.qte) ? r.qte : 0}
-                          onChange={(e) => setCell(i, { qte: parseFloat(e.target.value.replace(",", ".")) || 0 })}
-                        />
-                      </div>
-
-                      {/* Prix unitaire (auto) */}
-                      <div>
-                        <Input className={`bg-white/60 ${t} h-8`} value={Number.isFinite(r.prixUnitaire) ? r.prixUnitaire : 0} readOnly />
-                      </div>
-
-                      {/* Coeff local */}
-                      <div>
-                        <Input
-                          inputMode="decimal"
-                          className={`bg-white/60 ${t} h-8`}
-                          value={Number.isFinite(r.coeffLocal) ? r.coeffLocal : 1}
-                          onChange={(e) => setCell(i, { coeffLocal: parseFloat(e.target.value.replace(",", ".")) || 0 })}
-                        />
-                      </div>
-
-                      {/* Total HT */}
-                      <div className={`${t} font-medium`}>€ {fmt(r.totalHT)}</div>
-
-                      {/* % du total */}
-                      <div className={`${t}`}>{(r.pct * 100 > 0 ? fmt(r.pct * 100) : "0")}%</div>
-
-                      {/* Niveau */}
-                      <div>
-                        <select
-                          className={`w-full rounded-md border border-slate-200 ${px} ${py} ${t} bg-white h-8`}
-                          value={r.niveau}
-                          onChange={(e) => handleLevelChange(i, e.target.value as RowLevel)}
-                        >
-                          {["Par défaut", "Bas", "Moyen", "Haut"].map((lv) => (
-                            <option key={lv} value={lv}>{lv}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Commentaires + actions */}
-                      <div className="flex items-center gap-1.5">
-                        <Input
-                          className={`bg-white/60 ${t} h-8`}
-                          value={r.commentaires ?? ""}
-                          onChange={(e) => setCell(i, { commentaires: e.target.value })}
-                        />
-                        <div className="flex gap-1">
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+              <table className="w-full text-[12px]">
+                <thead className="bg-slate-50 text-left text-slate-600">
+                  <tr>
+                    <th className="px-2 py-2 w-[24%]">Catégorie</th>
+                    <th className="px-2 py-2 w-[46%]">Sous-poste</th>
+                    <th className="px-2 py-2 w-[15%] text-right">Total HT (€)</th>
+                    <th className="px-2 py-2 w-[15%]"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i} className="border-t hover:bg-slate-50">
+                      <td className="px-2 py-2">{r.categorie || "—"}</td>
+                      <td className="px-2 py-2">{r.sousPoste || "—"}</td>
+                      <td className="px-2 py-2 text-right">€ {fmt(r.totalHT)}</td>
+                      <td className="px-2 py-2 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
-                            className={`text-[10px] px-2 ${py} rounded-md border border-slate-200 hover:bg-slate-50`}
-                            onClick={() => duplicateRow(i)}
-                            title="Dupliquer la ligne"
+                            className="text-xs px-2 py-1 rounded-md border border-slate-200 hover:bg-slate-100"
+                            onClick={() => openEdit(i)}
                             data-html2canvas-ignore
                           >
-                            📄
+                            Éditer
                           </button>
                           <button
-                            className={`text-[10px] px-2 ${py} rounded-md border border-slate-200 hover:bg-red-50 hover:border-red-300 text-red-600`}
+                            className="text-xs px-2 py-1 rounded-md border border-slate-200 hover:bg-red-50 hover:border-red-300 text-red-600"
                             onClick={() => removeRow(i)}
-                            title="Supprimer la ligne"
                             data-html2canvas-ignore
                           >
-                            ✕
+                            Suppr.
                           </button>
                         </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {rows.length === 0 && (
+                    <tr>
+                      <td className="px-2 py-4 text-slate-500" colSpan={4}>
+                        Aucune ligne. Clique sur “+” pour ajouter une ligne.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </CardContent>
         </Card>
@@ -496,7 +399,7 @@ function TravauxTab({
       {/* SYNTHÈSE */}
       <div ref={synthRef}>
         <Card className="shadow-sm border-slate-200 bg-white/90 backdrop-blur">
-          <CardHeader className="pb-1 flex items-center justify-between">
+          <CardHeader className="pb-1">
             <CardTitle className="text-base font-semibold text-slate-900">Synthèse</CardTitle>
           </CardHeader>
           <CardContent className="pt-1.5">
@@ -528,8 +431,15 @@ function TravauxTab({
                       <td className="px-2 py-1" />
                     </tr>
                     <tr className="bg-slate-50">
-                      <td className="px-2 py-1 font-semibold">TVA (taux par défaut)</td>
-                      <td className="px-2 py-1 font-semibold">€ {fmt(ttva)} (taux {fmt(travaux.tva * 100)} %)</td>
+                      <td className="px-2 py-1 font-semibold">TVA (taux)</td>
+                      <td className="px-2 py-1">
+                        <div className="flex items-center gap-2">
+                          <span>€ {fmt(ttva)}</span>
+                          <span className="text-slate-500 text-[11px]">
+                            (taux {fmt(travaux.tva * 100)} %)
+                          </span>
+                        </div>
+                      </td>
                       <td className="px-2 py-1" />
                     </tr>
                     <tr className="bg-slate-100">
@@ -550,11 +460,89 @@ function TravauxTab({
           </CardContent>
         </Card>
       </div>
+
+      {/* Drawer vertical */}
+      {drawerOpen && (
+        <div className="fixed inset-0 z-50" data-html2canvas-ignore>
+          <div className="absolute inset-0 bg-black/40" onClick={closeDrawer} />
+          <div className="absolute top-0 right-0 h-full w-[380px] bg-white shadow-2xl p-4 overflow-y-auto">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-lg font-semibold">{editIndex === null ? "Nouvelle ligne" : "Modifier la ligne"}</div>
+              <button
+                className="px-2 py-1 text-sm rounded-md border border-slate-200 hover:bg-slate-50"
+                onClick={closeDrawer}
+              >
+                Fermer
+              </button>
+            </div>
+
+            {/* Sélection Catégorie / Sous-poste */}
+            <div className="space-y-2">
+              <div>
+                <Label className="text-xs text-slate-600">Catégorie</Label>
+                <select
+                  className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
+                  value={draft.categorie || ""}
+                  onChange={(e) => {
+                    const cat = e.target.value || undefined;
+                    const firstSous = cat ? sousByCat[cat]?.[0]?.sousPoste : undefined;
+                    setDraft((d) => ({ ...d, categorie: cat, sousPoste: firstSous, commentaires: d.commentaires || "" }));
+                  }}
+                >
+                  <option value="">—</option>
+                  {CATS.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs text-slate-600">Sous-poste</Label>
+                <select
+                  className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
+                  value={draft.sousPoste || ""}
+                  onChange={(e) => setDraft((d) => ({ ...d, sousPoste: e.target.value || undefined }))}
+                  disabled={!draft.categorie}
+                >
+                  <option value="">{draft.categorie ? "—" : "Choisir catégorie"}</option>
+                  {(draft.categorie ? sousByCat[draft.categorie] || [] : []).map((sp) => (
+                    <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Champs numériques */}
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <Num label="Quantité" value={draft.qte} onChange={(v) => setDraft((d) => ({ ...d, qte: v }))} />
+              <Num label="Coeff. local" value={draft.coeffLocal ?? 1} onChange={(v) => setDraft((d) => ({ ...d, coeffLocal: v || 1 }))} />
+              <TextField label="Unité (auto)" value={draft.unite || ""} onChange={() => {}} />
+              <TextField label="Prix unitaire (moyen, auto)" value={String(draft.prixUnitaire || 0)} onChange={() => {}} />
+              <TextField label="Total HT (auto)" value={`€ ${fmt(draft.totalHT)}`} onChange={() => {}} />
+            </div>
+
+            {/* Commentaires */}
+            <div className="mt-3">
+              <Label className="text-xs text-slate-600">Commentaires</Label>
+              <Input
+                className="bg-white/60 h-8 px-2 py-1"
+                value={draft.commentaires ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, commentaires: e.target.value }))}
+                placeholder="Notes internes, précisions..."
+              />
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50" onClick={closeDrawer}>Annuler</button>
+              <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" onClick={saveDraft}>Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-/* ------------ Onglet EURL ------------ */
+/* ------------ EURL ------------ */
 function CalculateurEURL({
   eurl,
   setEurl,
@@ -625,7 +613,7 @@ function CalculateurEURL({
   );
 }
 
-/* ------------ Onglet SCCV ------------ */
+/* ------------ SCCV ------------ */
 function CalculateurSCCV({
   sccv,
   setSccv,
@@ -726,10 +714,9 @@ const DEFAULT_SCCV: SCCVState = {
   regimeHoldingPct: 1.25,
 };
 
-type TravauxStateAll = TravauxState;
-const DEFAULT_TRAVAUX: TravauxStateAll = {
-  rows: [{ qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }],
-  tva: DEFAULT_TVA,
+const DEFAULT_TRAVAUX: TravauxState = {
+  rows: [{ qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, commentaires: "" }],
+  tva: 0.10,
 };
 
 export default function App() {
@@ -745,16 +732,34 @@ export default function App() {
     try { const raw = localStorage.getItem("calc:sccv"); return raw ? { ...DEFAULT_SCCV, ...JSON.parse(raw) } : DEFAULT_SCCV; }
     catch { return DEFAULT_SCCV; }
   });
-  const [travaux, setTravaux] = useState<TravauxStateAll>(() => {
+  const [travaux, setTravaux] = useState<TravauxState>(() => {
     try { const raw = localStorage.getItem("calc:travaux"); return raw ? { ...DEFAULT_TRAVAUX, ...JSON.parse(raw) } : DEFAULT_TRAVAUX; }
     catch { return DEFAULT_TRAVAUX; }
   });
-
   useEffect(() => { try { localStorage.setItem("calc:eurl", JSON.stringify(eurl)); } catch {} }, [eurl]);
   useEffect(() => { try { localStorage.setItem("calc:sccv", JSON.stringify(sccv)); } catch {} }, [sccv]);
   useEffect(() => { try { localStorage.setItem("calc:travaux", JSON.stringify(travaux)); } catch {} }, [travaux]);
   useEffect(() => { try { localStorage.setItem("calc:tab", tab); } catch {} }, [tab]);
 
+  // ---- Catalogue (live) ----
+  const [catalogue, setCatalogue] = useState<CatalogueItem[]>(FALLBACK_CATALOGUE);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(SHEET_CSV_URL, { method: "GET" });
+        if (!res.ok) throw new Error("http error");
+        const csv = await res.text();
+        const parsed = parseCatalogueCsv(csv);
+        if (!cancelled && parsed.length) setCatalogue(parsed);
+      } catch (_e) {
+        // fallback silencieux
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Lien SCCV → EURL (CA travaux)
   const sccvTravaux = useMemo(() => sccv.prixRenovM2 * sccv.surfaceM2, [sccv.prixRenovM2, sccv.surfaceM2]);
   useEffect(() => {
     if (!eurl.manualTravaux && eurl.travaux !== sccvTravaux) {
@@ -763,7 +768,7 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sccvTravaux, eurl.manualTravaux]);
 
-  // ---------- EXPORT : refs & sélecteur ----------
+  // ---------- EXPORT (sélecteur & rendu) ----------
   const sccvRef = useRef<HTMLDivElement>(null);
   const eurlRef = useRef<HTMLDivElement>(null);
   const travauxChiffrageRef = useRef<HTMLDivElement>(null);
@@ -788,12 +793,10 @@ export default function App() {
     const wrap = document.createElement("div");
     wrap.style.padding = "16px";
     wrap.style.background = "#ffffff";
-
     const addCloned = (ref?: React.RefObject<HTMLDivElement>, title?: string) => {
       if (!ref?.current) return;
       const page = document.createElement("div");
       page.style.pageBreakAfter = "always";
-
       if (title) {
         const h = document.createElement("h1");
         h.textContent = title;
@@ -804,18 +807,14 @@ export default function App() {
       page.appendChild(ref.current.cloneNode(true));
       wrap.appendChild(page);
     };
-
     if (targets.sccv) addCloned(sccvRef, "SCCV – Marchand de biens");
     if (targets.eurl) addCloned(eurlRef, "EURL – Rentabilité brute");
     if (targets.travauxSynth) addCloned(travauxSynthRef, "TRAVAUX – Synthèse");
     if (targets.travauxChiffrage) addCloned(travauxChiffrageRef, "TRAVAUX – Chiffrage");
-
     if (!wrap.childNodes.length) { setShowExport(false); return; }
-
     const now = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
     const filename = `Export_${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}h${pad(now.getMinutes())}.pdf`;
-
     const opt = {
       margin: 12,
       filename,
@@ -824,7 +823,6 @@ export default function App() {
       jsPDF: { unit: "mm", format: "a4", orientation: "portrait" as const },
       pagebreak: { mode: ["css", "legacy"] as const },
     };
-
     await (html2pdf() as any).set(opt).from(wrap).save();
     setShowExport(false);
   };
@@ -864,18 +862,15 @@ export default function App() {
       )}
 
       <div className="max-w-5xl mx-auto">
-        {/* Barre d'action */}
+        {/* Titre (pas de bouton export global en haut : demandé) */}
         <div className="flex items-center justify-between mb-3" data-html2canvas-ignore>
           <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900">
             Calculette investissement immo
           </h1>
-          <button
-            onClick={() => setShowExport(true)}
-            className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm shadow hover:bg-indigo-700"
-            title="Export"
-          >
-            Export
-          </button>
+          {/* Rien ici pour SCCV/EURL (tu voulais enlever le bouton du haut) */}
+          {tab === "travaux" && (
+            <div className="invisible">placeholder</div>
+          )}
         </div>
 
         {/* Tabs */}
@@ -903,7 +898,9 @@ export default function App() {
           <TravauxTab
             travaux={travaux}
             setTravaux={setTravaux}
-            chiffrageRef={travauxChiffrageRef}
+            catalogue={catalogue}
+            openExportSelector={() => setShowExport(true)}
+            chiffrageAnchorRef={travauxChiffrageRef}
             synthRef={travauxSynthRef}
           />
         )}
