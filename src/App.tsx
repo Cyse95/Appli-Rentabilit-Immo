@@ -5,12 +5,11 @@ import { Label } from "@/components/ui/label";
 import html2pdf from "html2pdf.js";
 
 /* -------------------------------------------------------
-   ONGLET : TRAVAUX (catalogue + chiffrage + synthèse)
-   - Colonnes A..J "Chiffrage"
-   - Sous-poste dépend de Catégorie
+   TRAVAUX (catalogue + chiffrage + synthèse)
+   - Liste compacte (Catégorie, Sous-poste)
+   - Panneau latéral (drawer) pour saisir/modifier la ligne
    - Unité & Prix auto (Bas/Moyen/Haut ; "Par défaut" = Moyen)
-   - Total HT, % du total, Synthèse + TVA/TTC
-   - Export PDF : Synthèse uniquement
+   - Synthèse + réglage TVA en bas + export PDF
 -------------------------------------------------------- */
 
 type TabKey = "sccv" | "eurl" | "travaux";
@@ -60,22 +59,18 @@ function Num({
   disabled?: boolean;
 }) {
   return (
-    <div className="space-y-0.5">
-      <Label className="text-[10px] text-slate-500">{label}</Label>
-      <div className="flex items-center gap-1.5">
+    <div className="space-y-1">
+      <Label className="text-[11px] text-slate-600">{label}</Label>
+      <div className="flex items-center gap-2">
         <Input
           inputMode="decimal"
           value={Number.isFinite(value) ? value : 0}
-          onChange={(e) =>
-            onChange(parseFloat(e.target.value.replace(",", ".")) || 0)
-          }
-          className={`bg-white/60 h-8 px-2 py-1 ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
+          onChange={(e) => onChange(parseFloat(e.target.value.replace(",", ".")) || 0)}
+          className={`bg-white/60 h-9 ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
           disabled={disabled}
           readOnly={disabled}
         />
-        {suffix && (
-          <span className="text-[10px] text-slate-500 w-8 select-none">{suffix}</span>
-        )}
+        {suffix && <span className="text-[11px] text-slate-500 w-10 select-none">{suffix}</span>}
       </div>
     </div>
   );
@@ -93,13 +88,13 @@ function TextField({
   onChange: (v: string) => void;
 }) {
   return (
-    <div className="space-y-0.5">
-      <Label className="text-[10px] text-slate-500">{label}</Label>
+    <div className="space-y-1">
+      <Label className="text-[11px] text-slate-600">{label}</Label>
       <Input
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="bg-white/60 h-8 px-2 py-1"
+        className="bg-white/60 h-9"
       />
     </div>
   );
@@ -107,8 +102,8 @@ function TextField({
 
 function Kpi({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 p-2 text-[12px] bg-white/80">
-      <div className="text-slate-500 text-[10px] tracking-wide">{label}</div>
+    <div className="rounded-xl border border-slate-200 p-3 text-[12px] bg-white/80">
+      <div className="text-slate-500 text-[11px] tracking-wide">{label}</div>
       <div className="text-[13px] font-semibold text-slate-900">{value}</div>
     </div>
   );
@@ -148,7 +143,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-/* ------------ CATALOGUE (en dur) ------------ */
+/* ------------ CATALOGUE ------------ */
 type CatalogueItem = {
   categorie: string;
   sousPoste: string;
@@ -221,18 +216,18 @@ const SOUS_POSTES_BY_CAT: Record<string, CatalogueItem[]> = CATALOGUE.reduce((ac
   return acc;
 }, {} as Record<string, CatalogueItem[]>);
 
-/* ------------ TRAVAUX types (état global + persistance) ------------ */
+/* ------------ TRAVAUX state ------------ */
 type ChiffrageRow = {
-  categorie?: string;      // A
-  sousPoste?: string;      // B
-  unite?: string;          // C (auto)
-  qte: number;             // D
-  prixUnitaire: number;    // E (auto selon niveau)
-  coeffLocal: number;      // F
-  totalHT: number;         // G (auto)
-  pct: number;             // H (auto)
-  niveau: RowLevel;        // I
-  commentaires?: string;   // J
+  categorie?: string;
+  sousPoste?: string;
+  unite?: string;
+  qte: number;
+  prixUnitaire: number;
+  coeffLocal: number;
+  totalHT: number;
+  pct: number;
+  niveau: RowLevel;
+  commentaires?: string;
 };
 
 type TravauxState = {
@@ -244,15 +239,13 @@ type TravauxState = {
 const DEFAULT_PAR_DEFAUT: Level = "Moyen";
 const DEFAULT_TVA = 0.10;
 
-/* ------------ Onglet TRAVAUX (Chiffrage + Synthèse) ------------ */
+/* ------------ TRAVAUX TAB (liste + drawer) ------------ */
 function TravauxTab({
   travaux,
   setTravaux,
-  eurlPercents,
 }: {
   travaux: TravauxState;
   setTravaux: (t: TravauxState) => void;
-  eurlPercents: { matPct: number; moPct: number; caAutresPct: number };
 }) {
   const { rows, tva, synthComment } = travaux;
 
@@ -273,91 +266,79 @@ function TravauxTab({
   const ttva = useMemo(() => totalHT * tva, [totalHT, tva]);
   const ttc  = useMemo(() => totalHT + ttva, [totalHT, ttva]);
 
-  // --- recalcul d’une ligne ---
-  const recalcRow = (idx: number, base?: Partial<ChiffrageRow>) => {
-    const r = { ...rows[idx], ...base };
+  // ------ Drawer (panneau latéral) ------
+  const [open, setOpen] = useState(false);
+  const [editIndex, setEditIndex] = useState<number | null>(null);
+  const [draft, setDraft] = useState<ChiffrageRow | null>(null);
 
-    // Catégorie/sous-poste -> unité + prix
-    if (r.categorie && r.sousPoste) {
-      const item = SOUS_POSTES_BY_CAT[r.categorie]?.find((x) => x.sousPoste === r.sousPoste);
+  const openEditorFor = (index: number) => {
+    const base = rows[index];
+    setEditIndex(index);
+    setDraft({ ...base });
+    setOpen(true);
+  };
+
+  const createAndOpen = () => {
+    const newRow: ChiffrageRow = {
+      categorie: undefined,
+      sousPoste: undefined,
+      unite: undefined,
+      qte: 0,
+      prixUnitaire: 0,
+      coeffLocal: 1,
+      totalHT: 0,
+      pct: 0,
+      niveau: "Par défaut",
+      commentaires: "",
+    };
+    const nextRows = [...rows, newRow];
+    setTravaux({ ...travaux, rows: nextRows });
+    openEditorFor(nextRows.length - 1);
+  };
+
+  const computeDraft = (r: ChiffrageRow): ChiffrageRow => {
+    let next = { ...r };
+    if (next.categorie && next.sousPoste) {
+      const item = SOUS_POSTES_BY_CAT[next.categorie]?.find((x) => x.sousPoste === next.sousPoste);
       if (item) {
-        r.unite = item.unite;
-        const level: Level = r.niveau === "Par défaut" ? DEFAULT_PAR_DEFAUT : (r.niveau as Level);
-        r.prixUnitaire =
+        next.unite = item.unite;
+        const level: Level = next.niveau === "Par défaut" ? DEFAULT_PAR_DEFAUT : (next.niveau as Level);
+        next.prixUnitaire =
           level === "Bas" ? item.prix.bas :
           level === "Haut" ? item.prix.haut : item.prix.moyen;
       }
     }
+    const q = Number(next.qte) || 0;
+    const pu = Number(next.prixUnitaire) || 0;
+    const k = Number(next.coeffLocal) || 1;
+    next.totalHT = q * pu * k;
+    return next;
+  };
 
-    // Total HT
-    const q = Number(r.qte) || 0;
-    const pu = Number(r.prixUnitaire) || 0;
-    const k = Number(r.coeffLocal) || 1;
-    r.totalHT = q * pu * k;
-
+  const saveDraft = () => {
+    if (editIndex == null || !draft) return;
+    const updated = computeDraft(draft);
     const copy = [...rows];
-    copy[idx] = r;
+    copy[editIndex] = updated;
     const sum = copy.reduce((s, x) => s + (Number.isFinite(x.totalHT) ? x.totalHT : 0), 0);
     copy.forEach((x) => (x.pct = sum > 0 ? x.totalHT / sum : 0));
-
     setTravaux({ ...travaux, rows: copy });
+    setOpen(false);
   };
 
-  const setCell = (idx: number, patch: Partial<ChiffrageRow>) => recalcRow(idx, patch);
-
-  const handleCatChange = (idx: number, cat?: string) => {
-    const firstSous = cat ? SOUS_POSTES_BY_CAT[cat]?.[0]?.sousPoste : undefined;
-    recalcRow(idx, {
-      categorie: cat,
-      sousPoste: firstSous,
-      unite: undefined,
-      prixUnitaire: 0,
-    });
-  };
-
-  const handleSousChange = (idx: number, sous?: string) => recalcRow(idx, { sousPoste: sous });
-  const handleLevelChange = (idx: number, lvl: RowLevel) => recalcRow(idx, { niveau: lvl });
-
-  const addRow = () => {
-    setTravaux({
-      ...travaux,
-      rows: [...rows, { qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }],
-    });
-  };
-
-  const removeRow = (i: number) => {
-    setTravaux({ ...travaux, rows: rows.filter((_, idx) => idx !== i) });
-  };
-
-  const duplicateRow = (i: number) => {
-    const copy = [...rows];
-    const newRow = { ...copy[i] };
-    copy.splice(i + 1, 0, newRow);
+  const deleteRow = () => {
+    if (editIndex == null) return;
+    const copy = rows.filter((_, i) => i !== editIndex);
+    const sum = copy.reduce((s, x) => s + (Number.isFinite(x.totalHT) ? x.totalHT : 0), 0);
+    copy.forEach((x) => (x.pct = sum > 0 ? x.totalHT / sum : 0));
     setTravaux({ ...travaux, rows: copy });
+    setOpen(false);
   };
 
-  // Export PDF : Synthèse seulement (ref sur div interne)
-  const synthRef = useRef<HTMLDivElement>(null);
-  const exportSynthPDF = async () => {
-    await new Promise((r) => requestAnimationFrame(r));
-    const el = synthRef.current ?? document.getElementById("travaux-synth");
-    if (!el) return;
-    const opt = {
-      margin: 12,
-      filename: `Synthese_Travaux_${new Date().toISOString().slice(0,10)}.pdf`,
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2.2, useCORS: true, backgroundColor: "#ffffff" },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" as const },
-      pagebreak: { mode: ["css", "legacy"] as const },
-    };
-    await (html2pdf() as any).set(opt).from(el).save();
-  };
-
-  // styles (COMPACT permanent) + alignement strict entêtes/ligne
-  const t = "text-[10px]";
-  const py = "py-1";
-  const px = "px-1.5";
-  const GRID_COLS = "grid min-w-[980px] grid-cols-[13ch,20ch,6ch,7ch,11ch,8ch,12ch,9ch,13ch,1fr] lg:grid-cols-[14ch,22ch,7ch,8ch,12ch,9ch,13ch,10ch,14ch,1fr]";
+  // -------- Liste compacte (Catégorie + Sous-poste) --------
+  const GRID_LIST = "grid grid-cols-[20ch,1fr] lg:grid-cols-[24ch,1fr] gap-2";
+  const HEADER_CLS = "text-[12px] font-semibold text-slate-600 px-2";
+  const ROW_CLS = "items-center bg-white rounded-lg border border-slate-200 px-2 py-2 cursor-pointer hover:bg-slate-50";
 
   return (
     <>
@@ -366,160 +347,42 @@ function TravauxTab({
           <CardTitle className="text-base font-semibold text-slate-900">
             TRAVAUX – Chiffrage
           </CardTitle>
-
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            <div />
-            <div />
-            <div className="flex items-end gap-2 justify-end">
-              <button
-                onClick={addRow}
-                className="px-2.5 py-1.5 rounded-lg bg-slate-800 text-white text-xs hover:bg-slate-900"
-                data-html2canvas-ignore
-              >
-                + Ajouter une ligne
-              </button>
-
-              {/* Compteur */}
-              <div className="ml-1 text-[10px] text-slate-600 flex flex-col items-end">
-                <div>Lignes : <span className="font-semibold text-slate-800">{rows.length}</span></div>
-                <div>Total HT : <span className="font-semibold text-indigo-700">€ {fmt(totalHT)}</span></div>
-              </div>
+          <div className="mt-2 flex items-center justify-between">
+            <div className="text-[12px] text-slate-600">
+              Lignes : <span className="font-semibold text-slate-800">{rows.length}</span>
+              <span className="ml-3">Total HT : <span className="font-semibold text-indigo-700">€ {fmt(totalHT)}</span></span>
             </div>
+            <button
+              onClick={createAndOpen}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs hover:bg-slate-900"
+              data-html2canvas-ignore
+            >
+              + Ajouter une ligne
+            </button>
           </div>
         </CardHeader>
 
         <CardContent className="pt-2">
           <div className="overflow-x-auto">
-            {/* En-têtes A..J (même grille que les lignes) */}
-            <div className={`${GRID_COLS} ${t} font-semibold text-slate-600 ${px}`}>
-              <div className="sticky left-0 bg-white z-10 pr-2">Catégorie (A)</div>
-              <div>Sous-poste (B)</div>
-              <div>Unité (C)</div>
-              <div>Qté (D)</div>
-              <div>Prix unitaire € (E)</div>
-              <div>Coeff (F)</div>
-              <div>Total HT € (G)</div>
-              <div>% du total (H)</div>
-              <div>Niveau (I)</div>
-              <div>Commentaires (J)</div>
+            {/* En-têtes alignés avec lignes */}
+            <div className={`${GRID_LIST} ${HEADER_CLS}`}>
+              <div>Catégorie</div>
+              <div>Sous-poste</div>
             </div>
 
-            {/* Lignes */}
-            <div className="mt-1.5 space-y-1.5">
-              {rows.map((r, i) => {
-                const sousList = r.categorie ? SOUS_POSTES_BY_CAT[r.categorie] ?? [] : [];
-                return (
-                  <div
-                    key={i}
-                    className={`${GRID_COLS} items-center gap-1.5 bg-white rounded-lg border border-slate-200 ${px} ${py}`}
-                  >
-                    {/* Catégorie (sticky) */}
-                    <div className="sticky left-0 bg-white z-10 pr-2">
-                      <select
-                        className={`w-full rounded-md border border-slate-200 ${px} ${py} ${t} bg-white h-8`}
-                        value={r.categorie || ""}
-                        onChange={(e) => handleCatChange(i, e.target.value || undefined)}
-                      >
-                        <option value="">—</option>
-                        {CATS.map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Sous-poste */}
-                    <div>
-                      <select
-                        className={`w-full rounded-md border border-slate-200 ${px} ${py} ${t} bg-white h-8`}
-                        value={r.sousPoste || ""}
-                        onChange={(e) => handleSousChange(i, e.target.value || undefined)}
-                        disabled={!r.categorie}
-                      >
-                        <option value="">{r.categorie ? "—" : "Choisir catégorie"}</option>
-                        {sousList.map((sp) => (
-                          <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Unité (auto) */}
-                    <div>
-                      <Input className={`bg-white/60 ${t} h-8`} value={r.unite ?? ""} readOnly />
-                    </div>
-
-                    {/* Qté */}
-                    <div>
-                      <Input
-                        inputMode="decimal"
-                        className={`bg-white/60 ${t} h-8`}
-                        value={Number.isFinite(r.qte) ? r.qte : 0}
-                        onChange={(e) => setCell(i, { qte: parseFloat(e.target.value.replace(",", ".")) || 0 })}
-                      />
-                    </div>
-
-                    {/* Prix unitaire (auto) */}
-                    <div>
-                      <Input className={`bg-white/60 ${t} h-8`} value={Number.isFinite(r.prixUnitaire) ? r.prixUnitaire : 0} readOnly />
-                    </div>
-
-                    {/* Coeff local */}
-                    <div>
-                      <Input
-                        inputMode="decimal"
-                        className={`bg-white/60 ${t} h-8`}
-                        value={Number.isFinite(r.coeffLocal) ? r.coeffLocal : 1}
-                        onChange={(e) => setCell(i, { coeffLocal: parseFloat(e.target.value.replace(",", ".")) || 0 })}
-                      />
-                    </div>
-
-                    {/* Total HT */}
-                    <div className={`${t} font-medium`}>€ {fmt(r.totalHT)}</div>
-
-                    {/* % du total */}
-                    <div className={`${t}`}>{(r.pct * 100 > 0 ? fmt(r.pct * 100) : "0")}%</div>
-
-                    {/* Niveau */}
-                    <div>
-                      <select
-                        className={`w-full rounded-md border border-slate-200 ${px} ${py} ${t} bg-white h-8`}
-                        value={r.niveau}
-                        onChange={(e) => handleLevelChange(i, e.target.value as RowLevel)}
-                      >
-                        {["Par défaut", "Bas", "Moyen", "Haut"].map((lv) => (
-                          <option key={lv} value={lv}>{lv}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Commentaires + actions */}
-                    <div className="flex items-center gap-1.5">
-                      <Input
-                        className={`bg-white/60 ${t} h-8`}
-                        value={r.commentaires ?? ""}
-                        onChange={(e) => setCell(i, { commentaires: e.target.value })}
-                      />
-                      <div className="flex gap-1">
-                        <button
-                          className={`text-[10px] px-2 ${py} rounded-md border border-slate-200 hover:bg-slate-50`}
-                          onClick={() => duplicateRow(i)}
-                          title="Dupliquer la ligne"
-                          data-html2canvas-ignore
-                        >
-                          📄
-                        </button>
-                        <button
-                          className={`text-[10px] px-2 ${py} rounded-md border border-slate-200 hover:bg-red-50 hover:border-red-300 text-red-600`}
-                          onClick={() => removeRow(i)}
-                          title="Supprimer la ligne"
-                          data-html2canvas-ignore
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+            {/* Lignes cliquables */}
+            <div className="mt-2 space-y-2">
+              {rows.map((r, i) => (
+                <div
+                  key={i}
+                  className={`${GRID_LIST} ${ROW_CLS}`}
+                  onClick={() => openEditorFor(i)}
+                  title="Cliquer pour modifier"
+                >
+                  <div className="text-[12px]">{r.categorie ?? <span className="text-slate-400">—</span>}</div>
+                  <div className="text-[12px]">{r.sousPoste ?? <span className="text-slate-400">—</span>}</div>
+                </div>
+              ))}
             </div>
           </div>
         </CardContent>
@@ -530,7 +393,19 @@ function TravauxTab({
         <CardHeader className="pb-1 flex items-center justify-between">
           <CardTitle className="text-base font-semibold text-slate-900">Synthèse</CardTitle>
           <button
-            onClick={exportSynthPDF}
+            onClick={async () => {
+              const el = document.getElementById("travaux-synth");
+              if (!el) return;
+              const opt = {
+                margin: 12,
+                filename: `Synthese_Travaux_${new Date().toISOString().slice(0,10)}.pdf`,
+                image: { type: "jpeg", quality: 0.98 },
+                html2canvas: { scale: 2.2, useCORS: true, backgroundColor: "#ffffff" },
+                jsPDF: { unit: "mm", format: "a4", orientation: "portrait" as const },
+                pagebreak: { mode: ["css", "legacy"] as const },
+              };
+              await (html2pdf() as any).set(opt).from(el).save();
+            }}
             className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs shadow hover:bg-indigo-700"
             data-html2canvas-ignore
           >
@@ -538,8 +413,7 @@ function TravauxTab({
           </button>
         </CardHeader>
         <CardContent className="pt-1.5">
-          {/* CIBLE PDF */}
-          <div id="travaux-synth" ref={synthRef}>
+          <div id="travaux-synth">
             {/* Tableau synthèse par catégorie */}
             <div className="overflow-x-auto">
               <table className="w-full text-[12px] border-separate border-spacing-y-1">
@@ -571,75 +445,169 @@ function TravauxTab({
                     <td className="px-2 py-1 font-semibold">
                       TVA <span className="text-slate-500">(taux {fmt(tva * 100)} %)</span>
                     </td>
-                    <td className="px-2 py-1 font-semibold">€ {fmt(ttva)}</td>
+                    <td className="px-2 py-1 font-semibold">€ {fmt(totalHT * tva)}</td>
                     <td className="px-2 py-1" />
                   </tr>
                   <tr className="bg-slate-100">
                     <td className="px-2 py-1 font-semibold">TOTAL TTC</td>
-                    <td className="px-2 py-1 font-semibold">€ {fmt(ttc)}</td>
+                    <td className="px-2 py-1 font-semibold">€ {fmt(totalHT * (1 + tva))}</td>
                     <td className="px-2 py-1" />
                   </tr>
                 </tbody>
               </table>
             </div>
 
-            {/* Réglage TVA + KPIs + % MO/Matière/Frais/Total */}
+            {/* Réglage TVA + commentaire synthèse */}
             <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Réglage TVA déplacé ici */}
-              <div className="rounded-xl border border-slate-200 p-2 bg-white/70">
-                <div className="text-[10px] text-slate-600 mb-1">Réglages</div>
-                <div className="grid grid-cols-2 gap-2 items-end">
-                  <Num
-                    label="TVA (taux)"
-                    value={tva * 100}
-                    suffix="%"
-                    onChange={(v) => setTravaux({ ...travaux, tva: (v || 0) / 100 })}
-                  />
-                  <div className="text-[11px] text-slate-600">
-                    <div>Total HT : <span className="font-semibold text-slate-800">€ {fmt(totalHT)}</span></div>
-                    <div>Total TTC : <span className="font-semibold text-slate-800">€ {fmt(ttc)}</span></div>
-                  </div>
+              <div className="rounded-xl border border-slate-200 p-3 bg-white/70">
+                <Num
+                  label="TVA (taux)"
+                  value={tva * 100}
+                  suffix="%"
+                  onChange={(v) => setTravaux({ ...travaux, tva: (v || 0) / 100 })}
+                />
+                <div className="mt-2 grid grid-cols-3 gap-3">
+                  <Kpi label="Total HT" value={`€ ${fmt(totalHT)}`} />
+                  <Kpi label="TVA" value={`€ ${fmt(totalHT * tva)}`} />
+                  <Kpi label="Total TTC" value={`€ ${fmt(totalHT * (1 + tva))}`} />
                 </div>
               </div>
-
-              {/* % Répartition issue de l'onglet EURL */}
-              <div className="rounded-xl border border-slate-200 p-2 bg-white/70">
-                <div className="text-[10px] text-slate-600 mb-1">Répartition EURL (pourcentages)</div>
-                <div className="grid grid-cols-4 gap-2">
-                  <Kpi label="% Matériaux" value={`${fmt(eurlPercents.matPct)} %`} />
-                  <Kpi label="% Main d'œuvre" value={`${fmt(eurlPercents.moPct)} %`} />
-                  <Kpi label="% Autres frais" value={`${fmt(eurlPercents.caAutresPct)} %`} />
-                  <Kpi
-                    label="% Total"
-                    value={`${fmt(
-                      (eurlPercents.matPct || 0) +
-                      (eurlPercents.moPct || 0) +
-                      (eurlPercents.caAutresPct || 0)
-                    )} %`}
-                  />
-                </div>
+              <div className="rounded-xl border border-slate-200 p-3 bg-white/70">
+                <Label className="text-[11px] text-slate-600">Commentaire (synthèse)</Label>
+                <textarea
+                  className="w-full mt-1 rounded-md border border-slate-200 p-2 text-[12px] bg-white/70"
+                  rows={4}
+                  placeholder="Notes, hypothèses, réserves…"
+                  value={synthComment ?? ""}
+                  onChange={(e) => setTravaux({ ...travaux, synthComment: e.target.value })}
+                />
               </div>
-            </div>
-
-            {/* Commentaire global synthèse */}
-            <div className="mt-3">
-              <Label className="text-[10px] text-slate-500">Commentaire (synthèse)</Label>
-              <textarea
-                className="w-full mt-1 rounded-md border border-slate-200 p-2 text-[12px] bg-white/70"
-                rows={3}
-                placeholder="Notes, hypothèses, réserves..."
-                value={synthComment ?? ""}
-                onChange={(e) => setTravaux({ ...travaux, synthComment: e.target.value })}
-              />
             </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Drawer (panneau latéral) */}
+      {open && draft && (
+        <div className="fixed inset-0 z-50" aria-modal>
+          {/* backdrop */}
+          <div
+            className="absolute inset-0 bg-black/30"
+            onClick={() => setOpen(false)}
+          />
+          {/* panel */}
+          <div className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl p-4 overflow-y-auto">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-semibold">Saisie ligne travaux</h3>
+              <button
+                className="text-slate-600 hover:text-slate-900"
+                onClick={() => setOpen(false)}
+                title="Fermer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Formulaire */}
+            <div className="space-y-3">
+              <div>
+                <Label className="text-[11px] text-slate-600">Catégorie</Label>
+                <select
+                  className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
+                  value={draft.categorie || ""}
+                  onChange={(e) => {
+                    const cat = e.target.value || undefined;
+                    const firstSous = cat ? SOUS_POSTES_BY_CAT[cat]?.[0]?.sousPoste : undefined;
+                    setDraft((d) => d ? computeDraft({ ...d, categorie: cat, sousPoste: firstSous, unite: undefined, prixUnitaire: 0 }) : d);
+                  }}
+                >
+                  <option value="">—</option>
+                  {CATS.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <Label className="text-[11px] text-slate-600">Sous-poste</Label>
+                <select
+                  className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
+                  value={draft.sousPoste || ""}
+                  onChange={(e) => {
+                    const sous = e.target.value || undefined;
+                    setDraft((d) => d ? computeDraft({ ...d, sousPoste: sous }) : d);
+                  }}
+                  disabled={!draft.categorie}
+                >
+                  <option value="">{draft.categorie ? "—" : "Choisir catégorie"}</option>
+                  {(draft.categorie ? SOUS_POSTES_BY_CAT[draft.categorie] : []).map((sp) => (
+                    <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <TextField label="Unité" value={draft.unite ?? ""} placeholder="" onChange={()=>{}} />
+                <div>
+                  <Label className="text-[11px] text-slate-600">Niveau de prix</Label>
+                  <select
+                    className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
+                    value={draft.niveau}
+                    onChange={(e) => setDraft((d) => d ? computeDraft({ ...d, niveau: e.target.value as RowLevel }) : d)}
+                  >
+                    {["Par défaut", "Bas", "Moyen", "Haut"].map((lv) => <option key={lv} value={lv}>{lv}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <Num label="Quantité" value={draft.qte} onChange={(v) => setDraft((d)=> d ? computeDraft({ ...d, qte: v }) : d)} />
+                <Num label="Coeff local" value={draft.coeffLocal} onChange={(v) => setDraft((d)=> d ? computeDraft({ ...d, coeffLocal: v }) : d)} />
+                <Num label="Prix unitaire" value={draft.prixUnitaire} onChange={(v)=> setDraft((d)=> d ? computeDraft({ ...d, prixUnitaire: v }) : d)} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Kpi label="Total HT (calculé)" value={`€ ${fmt(draft.totalHT)}`} />
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-slate-600">Commentaires (ligne)</Label>
+                  <textarea
+                    className="w-full rounded-md border border-slate-200 p-2 text-[12px] bg-white/70"
+                    rows={3}
+                    value={draft.commentaires ?? ""}
+                    onChange={(e) => setDraft((d)=> d ? { ...d, commentaires: e.target.value } : d)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  className="px-3 py-2 rounded-md border border-slate-200 hover:bg-slate-50"
+                  onClick={deleteRow}
+                >
+                  Supprimer la ligne
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="px-3 py-2 rounded-md border border-slate-200 hover:bg-slate-50"
+                    onClick={() => setOpen(false)}
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
+                    onClick={saveDraft}
+                  >
+                    Enregistrer
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-/* ------------ Onglet EURL ------------ */
+/* ------------ EURL ------------ */
 function CalculateurEURL({
   eurl,
   setEurl,
@@ -650,27 +618,12 @@ function CalculateurEURL({
   sccvTravaux: number;
 }) {
   const caTotal = useMemo(() => eurl.travaux, [eurl.travaux]);
-  const coutMat = useMemo(
-    () => (eurl.travaux * eurl.matPct) / 100,
-    [eurl.travaux, eurl.matPct]
-  );
-  const coutMO = useMemo(
-    () => (eurl.travaux * eurl.moPct) / 100,
-    [eurl.travaux, eurl.moPct]
-  );
-  const coutAutres = useMemo(
-    () => (eurl.travaux * eurl.caAutresPct) / 100,
-    [eurl.travaux, eurl.caAutresPct]
-  );
+  const coutMat = useMemo(() => (eurl.travaux * eurl.matPct) / 100, [eurl.travaux, eurl.matPct]);
+  const coutMO = useMemo(() => (eurl.travaux * eurl.moPct) / 100, [eurl.travaux, eurl.moPct]);
+  const coutAutres = useMemo(() => (eurl.travaux * eurl.caAutresPct) / 100, [eurl.travaux, eurl.caAutresPct]);
 
-  const benefBrut = useMemo(
-    () => caTotal - (coutMat + coutMO + coutAutres),
-    [caTotal, coutMat, coutMO, coutAutres]
-  );
-  const impots = useMemo(
-    () => Math.max(benefBrut, 0) * (eurl.tauxIS / 100),
-    [benefBrut, eurl.tauxIS]
-  );
+  const benefBrut = useMemo(() => caTotal - (coutMat + coutMO + coutAutres), [caTotal, coutMat, coutMO, coutAutres]);
+  const impots = useMemo(() => Math.max(benefBrut, 0) * (eurl.tauxIS / 100), [benefBrut, eurl.tauxIS]);
   const benefNet = useMemo(() => benefBrut - impots, [benefBrut, impots]);
 
   useEffect(() => {
@@ -720,7 +673,7 @@ function CalculateurEURL({
   );
 }
 
-/* ------------ Onglet SCCV ------------ */
+/* ------------ SCCV ------------ */
 function CalculateurSCCV({
   sccv,
   setSccv,
@@ -728,10 +681,7 @@ function CalculateurSCCV({
   sccv: SCCVState;
   setSccv: (s: SCCVState) => void;
 }) {
-  const travaux = useMemo(
-    () => sccv.prixRenovM2 * sccv.surfaceM2,
-    [sccv.prixRenovM2, sccv.surfaceM2]
-  );
+  const travaux = useMemo(() => sccv.prixRenovM2 * sccv.surfaceM2, [sccv.prixRenovM2, sccv.surfaceM2]);
   const base = useMemo(() => sccv.bien + travaux, [sccv.bien, travaux]);
   const apport = useMemo(() => (sccv.apportPct / 100) * base, [sccv.apportPct, base]);
   const chargeCredit = useMemo(() => (base - apport) * (sccv.chargeCreditPct / 100), [base, apport, sccv.chargeCreditPct]);
@@ -747,10 +697,6 @@ function CalculateurSCCV({
   const impotsIS = useMemo(() => is15 + is25, [is15, is25]);
   const netRevente = useMemo(() => benefBrut - impotsIS, [benefBrut, impotsIS]);
   const tresorerieHolding = useMemo(() => netRevente * (1 - sccv.regimeHoldingPct / 100), [netRevente, sccv.regimeHoldingPct]);
-
-  const rendementBrutGlobal = useMemo(() => (benefBrut / totalApresApport) * 100, [benefBrut, totalApresApport]);
-  const rendementNetGlobal = useMemo(() => (netRevente / totalApresApport) * 100, [netRevente, totalApresApport]);
-  const rendementApport = useMemo(() => (apport > 0 ? (netRevente / apport) * 100 : 0), [netRevente, apport]);
 
   return (
     <Card className="mb-4 shadow-sm border-slate-200 bg-white/90 backdrop-blur">
@@ -891,13 +837,13 @@ export default function App() {
   return (
     <div className="min-h-screen p-5 md:p-7 bg-gradient-to-b from-slate-50 to-zinc-100 text-slate-900">
       <div className="max-w-5xl mx-auto">
-        {/* Barre d'action (non incluse dans le PDF) */}
+        {/* Barre d'action (non incluse PDF) */}
         <div className="flex items-center justify-between mb-3" data-html2canvas-ignore>
           <div>
             <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900">
               Calculette investissement immo
             </h1>
-            <p className="text-[12px] text-slate-600">Version compacte – chiffrage + synthèse + export PDF synthèse</p>
+            <p className="text-[12px] text-slate-600">Version compacte – chiffrage (drawer) + synthèse + export PDF</p>
           </div>
           <button
             onClick={exportPDF}
@@ -908,7 +854,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* Tabs écran */}
+        {/* Tabs */}
         <Tabs active={tab} onChange={setTab} />
 
         {/* Zone visible écran OU dossier PDF */}
@@ -922,11 +868,7 @@ export default function App() {
               ) : tab === "eurl" ? (
                 <CalculateurEURL eurl={eurl} setEurl={setEurl} sccvTravaux={sccvTravaux} />
               ) : (
-                <TravauxTab
-                  travaux={travaux}
-                  setTravaux={setTravaux}
-                  eurlPercents={{ matPct: eurl.matPct, moPct: eurl.moPct, caAutresPct: eurl.caAutresPct }}
-                />
+                <TravauxTab travaux={travaux} setTravaux={setTravaux} />
               )}
               <footer className="mt-4 text-[10px] text-slate-500">
                 Accent principal: <span className="text-indigo-600 font-medium">indigo</span>. Fond: slate/zinc.
