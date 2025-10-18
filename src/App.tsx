@@ -242,10 +242,10 @@ const START_ROWS = 12;
 function TravauxTab() {
   const [defaultLevel, setDefaultLevel] = useState<Level>(DEFAULT_LEVEL);
   const [tva, setTva] = useState<number>(DEFAULT_TVA); // 0.10 = 10%
+  const [compact, setCompact] = useState(true); // ✅ mode compact par défaut
   const [rows, setRows] = useState<ChiffrageRow[]>(
-    Array.from({ length: START_ROWS }, () => ({
-      qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut",
-    }))
+    // ✅ 1 seule ligne par défaut
+    [{ qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }]
   );
 
   const totalHT = useMemo(
@@ -265,71 +265,51 @@ function TravauxTab() {
   const ttva = useMemo(() => totalHT * tva, [totalHT, tva]);
   const ttc  = useMemo(() => totalHT + ttva, [totalHT, ttva]);
 
-  // recalcul d’une ligne (unité + prix selon niveau + total + %)
+  // recalcul d’une ligne
   const recalcRow = (idx: number, base?: Partial<ChiffrageRow>) => {
     setRows((prev) => {
       const r = { ...prev[idx], ...base };
 
-      // Si catégorie/sous-poste changent → unité + prix tiers
-      let item: CatalogueItem | undefined;
+      // Catégorie/sous-poste -> unité + prix
       if (r.categorie && r.sousPoste) {
-        item = SOUS_POSTES_BY_CAT[r.categorie]?.find((x) => x.sousPoste === r.sousPoste);
+        const item = SOUS_POSTES_BY_CAT[r.categorie]?.find((x) => x.sousPoste === r.sousPoste);
         if (item) {
           r.unite = item.unite;
-          const level: Level =
-            r.niveau === "Par défaut" ? defaultLevel : (r.niveau as Level);
-          const p =
+          const level: Level = r.niveau === "Par défaut" ? defaultLevel : (r.niveau as Level);
+          r.prixUnitaire =
             level === "Bas" ? item.prix.bas :
             level === "Haut" ? item.prix.haut : item.prix.moyen;
-          r.prixUnitaire = p;
         }
       }
 
-      // Total HT = qte * prix * coeffLocal
+      // Total HT
       const q = Number(r.qte) || 0;
       const pu = Number(r.prixUnitaire) || 0;
       const k = Number(r.coeffLocal) || 1;
       r.totalHT = q * pu * k;
 
-      // % du total: (on calcule plus tard après avoir la somme globale)
       const copy = [...prev];
       copy[idx] = r;
       const sum = copy.reduce((s, x) => s + (Number.isFinite(x.totalHT) ? x.totalHT : 0), 0);
       copy.forEach((x) => (x.pct = sum > 0 ? x.totalHT / sum : 0));
-
       return copy;
     });
   };
 
   const setCell = (idx: number, patch: Partial<ChiffrageRow>) => recalcRow(idx, patch);
-
   const handleCatChange = (idx: number, cat?: string) => {
     const firstSous = cat ? SOUS_POSTES_BY_CAT[cat]?.[0]?.sousPoste : undefined;
-    recalcRow(idx, {
-      categorie: cat,
-      sousPoste: firstSous,
-      unite: undefined,
-      prixUnitaire: 0,
-    });
+    recalcRow(idx, { categorie: cat, sousPoste: firstSous, unite: undefined, prixUnitaire: 0 });
   };
-
-  const handleSousChange = (idx: number, sous?: string) => {
-    recalcRow(idx, { sousPoste: sous });
-  };
-
-  const handleLevelChange = (idx: number, lvl: RowLevel) => {
-    recalcRow(idx, { niveau: lvl });
-  };
+  const handleSousChange = (idx: number, sous?: string) => recalcRow(idx, { sousPoste: sous });
+  const handleLevelChange = (idx: number, lvl: RowLevel) => recalcRow(idx, { niveau: lvl });
 
   const addRow = () => {
     setRows((prev) => [...prev, { qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }]);
   };
+  const removeRow = (i: number) => setRows((prev) => prev.filter((_, idx) => idx !== i));
 
-  const removeRow = (i: number) => {
-    setRows((prev) => prev.filter((_, idx) => idx !== i));
-  };
-
-  // Export PDF : Synthèse seulement
+  // Export PDF synthèse
   const synthRef = useRef<HTMLDivElement>(null);
   const exportSynthPDF = async () => {
     if (!synthRef.current) return;
@@ -343,8 +323,16 @@ function TravauxTab() {
     await (html2pdf() as any).set(opt).from(synthRef.current).save();
   };
 
-  // UI helpers
   const levelOptions: RowLevel[] = ["Par défaut", "Bas", "Moyen", "Haut"];
+
+  // classes compactes vs normales
+  const t = compact ? "text-[11px]" : "text-sm";
+  const py = compact ? "py-1.5" : "py-2";
+  const px = "px-2";
+
+  // colonnes compactes < lg (puis plus larges en lg+)
+  const colsBase = "grid min-w-[1040px] grid-cols-[14ch,22ch,6ch,8ch,12ch,9ch,14ch,10ch,14ch,1fr]";
+  const colsLg   = "lg:grid-cols-[16ch,26ch,8ch,9ch,14ch,10ch,14ch,12ch,18ch,1fr]";
 
   return (
     <>
@@ -353,11 +341,12 @@ function TravauxTab() {
           <CardTitle className="text-lg font-semibold text-slate-900">
             TRAVAUX – Chiffrage (comme l’onglet Excel)
           </CardTitle>
+
           <div className="mt-3 grid grid-cols-3 gap-3">
             <div className="space-y-1">
               <Label className="text-xs text-slate-500">Niveau prix par défaut</Label>
               <select
-                className="w-full rounded-lg border border-slate-200 px-2 py-2 text-sm bg-white"
+                className={`w-full rounded-lg border border-slate-200 ${px} ${py} ${t} bg-white`}
                 value={defaultLevel}
                 onChange={(e) => setDefaultLevel(e.target.value as Level)}
               >
@@ -366,8 +355,18 @@ function TravauxTab() {
                 <option>Haut</option>
               </select>
             </div>
+
             <Num label="TVA (taux)" value={tva * 100} suffix="%" onChange={(v) => setTva((v || 0) / 100)} />
-            <div className="flex items-end">
+
+            <div className="flex items-end gap-2">
+              <button
+                onClick={() => setCompact((c) => !c)}
+                className="px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-sm"
+                data-html2canvas-ignore
+                title="Basculer le mode compact"
+              >
+                {compact ? "Mode normal" : "Mode compact"}
+              </button>
               <button
                 onClick={addRow}
                 className="px-3 py-2 rounded-lg bg-slate-800 text-white text-sm hover:bg-slate-900"
@@ -380,140 +379,135 @@ function TravauxTab() {
         </CardHeader>
 
         <CardContent>
-          {/* En-têtes A..J */}
-          <div className="grid grid-cols-[16ch,26ch,8ch,9ch,14ch,10ch,14ch,12ch,18ch,1fr] text-[12px] font-semibold text-slate-600 px-2">
-            <div>Catégorie (A)</div>
-            <div>Sous-poste (B)</div>
-            <div>Unité (C)</div>
-            <div>Qté (D)</div>
-            <div>Prix unitaire € (E)</div>
-            <div>Coeff (F)</div>
-            <div>Total HT € (G)</div>
-            <div>% total (H)</div>
-            <div>Niveau (I)</div>
-            <div>Commentaires (J)</div>
-          </div>
+          {/* Wrapper scroll horizontal */}
+          <div className="overflow-x-auto">
+            {/* En-têtes A..J */}
+            <div className={`${colsBase} ${colsLg} ${t} font-semibold text-slate-600 ${px}`}>
+              {/* Catégorie sticky */}
+              <div className="sticky left-0 bg-white z-10 pr-2">Catégorie (A)</div>
+              <div>Sous-poste (B)</div>
+              <div>Unité (C)</div>
+              <div>Qté (D)</div>
+              <div>Prix unitaire € (E)</div>
+              <div>Coeff (F)</div>
+              <div>Total HT € (G)</div>
+              <div>% total (H)</div>
+              <div>Niveau (I)</div>
+              <div>Commentaires (J)</div>
+            </div>
 
-          <div className="mt-2 space-y-2">
-            {rows.map((r, i) => {
-              const sousList = r.categorie ? SOUS_POSTES_BY_CAT[r.categorie] ?? [] : [];
-              return (
-                <div
-                  key={i}
-                  className="grid grid-cols-[16ch,26ch,8ch,9ch,14ch,10ch,14ch,12ch,18ch,1fr] items-center gap-2 bg-white rounded-xl border border-slate-200 px-2 py-2"
-                >
-                  {/* Catégorie */}
-                  <div>
-                    <select
-                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm bg-white"
-                      value={r.categorie || ""}
-                      onChange={(e) => handleCatChange(i, e.target.value || undefined)}
-                    >
-                      <option value="">—</option>
-                      {CATS.map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
+            {/* Lignes */}
+            <div className="mt-2 space-y-2">
+              {rows.map((r, i) => {
+                const sousList = r.categorie ? SOUS_POSTES_BY_CAT[r.categorie] ?? [] : [];
+                return (
+                  <div
+                    key={i}
+                    className={`${colsBase} ${colsLg} items-center gap-2 bg-white rounded-xl border border-slate-200 ${px} ${py}`}
+                  >
+                    {/* Catégorie (sticky) */}
+                    <div className="sticky left-0 bg-white z-10 pr-2">
+                      <select
+                        className={`w-full rounded-lg border border-slate-200 ${px} ${py} ${t} bg-white`}
+                        value={r.categorie || ""}
+                        onChange={(e) => handleCatChange(i, e.target.value || undefined)}
+                      >
+                        <option value="">—</option>
+                        {CATS.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Sous-poste */}
+                    <div>
+                      <select
+                        className={`w-full rounded-lg border border-slate-200 ${px} ${py} ${t} bg-white`}
+                        value={r.sousPoste || ""}
+                        onChange={(e) => handleSousChange(i, e.target.value || undefined)}
+                        disabled={!r.categorie}
+                      >
+                        <option value="">{r.categorie ? "—" : "Choisir catégorie"}</option>
+                        {sousList.map((sp) => (
+                          <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Unité (auto) */}
+                    <div>
+                      <Input className={`bg-white/60 ${t}`} value={r.unite ?? ""} readOnly />
+                    </div>
+
+                    {/* Qté */}
+                    <div>
+                      <Input
+                        inputMode="decimal"
+                        className={`bg-white/60 ${t}`}
+                        value={Number.isFinite(r.qte) ? r.qte : 0}
+                        onChange={(e) => setCell(i, { qte: parseFloat(e.target.value.replace(",", ".")) || 0 })}
+                      />
+                    </div>
+
+                    {/* Prix unitaire (auto) */}
+                    <div>
+                      <Input className={`bg-white/60 ${t}`} value={Number.isFinite(r.prixUnitaire) ? r.prixUnitaire : 0} readOnly />
+                    </div>
+
+                    {/* Coeff local */}
+                    <div>
+                      <Input
+                        inputMode="decimal"
+                        className={`bg-white/60 ${t}`}
+                        value={Number.isFinite(r.coeffLocal) ? r.coeffLocal : 1}
+                        onChange={(e) => setCell(i, { coeffLocal: parseFloat(e.target.value.replace(",", ".")) || 0 })}
+                      />
+                    </div>
+
+                    {/* Total HT */}
+                    <div className={`${t} font-medium`}>€ {fmt(r.totalHT)}</div>
+
+                    {/* % du total */}
+                    <div className={`${t}`}>{(r.pct * 100 > 0 ? fmt(r.pct * 100) : "0")}%</div>
+
+                    {/* Niveau */}
+                    <div>
+                      <select
+                        className={`w-full rounded-lg border border-slate-200 ${px} ${py} ${t} bg-white`}
+                        value={r.niveau}
+                        onChange={(e) => handleLevelChange(i, e.target.value as RowLevel)}
+                      >
+                        {levelOptions.map((lv) => (
+                          <option key={lv} value={lv}>{lv}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Commentaires + supprimer */}
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className={`bg-white/60 ${t}`}
+                        value={r.commentaires ?? ""}
+                        onChange={(e) => setCell(i, { commentaires: e.target.value })}
+                      />
+                      <button
+                        className={`text-xs px-2 ${py} rounded-md border border-slate-200 hover:bg-slate-50`}
+                        onClick={() => removeRow(i)}
+                        title="Supprimer la ligne"
+                        data-html2canvas-ignore
+                      >
+                        ✕
+                      </button>
+                    </div>
                   </div>
-
-                  {/* Sous-poste (dépend de Catégorie) */}
-                  <div>
-                    <select
-                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm bg-white"
-                      value={r.sousPoste || ""}
-                      onChange={(e) => handleSousChange(i, e.target.value || undefined)}
-                      disabled={!r.categorie}
-                    >
-                      <option value="">{r.categorie ? "—" : "Choisir catégorie"}</option>
-                      {sousList.map((sp) => (
-                        <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Unité (auto) */}
-                  <div>
-                    <Input
-                      className="bg-white/60 text-sm"
-                      value={r.unite ?? ""}
-                      readOnly
-                    />
-                  </div>
-
-                  {/* Qté */}
-                  <div>
-                    <Input
-                      inputMode="decimal"
-                      className="bg-white/60 text-sm"
-                      value={Number.isFinite(r.qte) ? r.qte : 0}
-                      onChange={(e) => setCell(i, { qte: parseFloat(e.target.value.replace(",", ".")) || 0 })}
-                    />
-                  </div>
-
-                  {/* Prix unitaire (auto par niveau) */}
-                  <div>
-                    <Input
-                      className="bg-white/60 text-sm"
-                      value={Number.isFinite(r.prixUnitaire) ? r.prixUnitaire : 0}
-                      readOnly
-                    />
-                  </div>
-
-                  {/* Coeff local */}
-                  <div>
-                    <Input
-                      inputMode="decimal"
-                      className="bg-white/60 text-sm"
-                      value={Number.isFinite(r.coeffLocal) ? r.coeffLocal : 1}
-                      onChange={(e) => setCell(i, { coeffLocal: parseFloat(e.target.value.replace(",", ".")) || 0 })}
-                    />
-                  </div>
-
-                  {/* Total HT (auto) */}
-                  <div className="text-sm font-medium">
-                    € {fmt(r.totalHT)}
-                  </div>
-
-                  {/* % du total (auto) */}
-                  <div className="text-sm">{(r.pct * 100 > 0 ? fmt(r.pct * 100) : "0")}%</div>
-
-                  {/* Niveau (Par défaut/Bas/Moyen/Haut) */}
-                  <div>
-                    <select
-                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm bg-white"
-                      value={r.niveau}
-                      onChange={(e) => handleLevelChange(i, e.target.value as RowLevel)}
-                    >
-                      {["Par défaut", "Bas", "Moyen", "Haut"].map((lv) => (
-                        <option key={lv} value={lv}>{lv}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Commentaires */}
-                  <div className="flex items-center gap-2">
-                    <Input
-                      className="bg-white/60 text-sm"
-                      value={r.commentaires ?? ""}
-                      onChange={(e) => setCell(i, { commentaires: e.target.value })}
-                    />
-                    <button
-                      className="text-xs px-2 py-1 rounded-md border border-slate-200 hover:bg-slate-50"
-                      onClick={() => removeRow(i)}
-                      title="Supprimer la ligne"
-                      data-html2canvas-ignore
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* SYNTHÈSE (Excel "Synthese") */}
+      {/* SYNTHÈSE */}
       <Card className="shadow-sm border-slate-200 bg-white/90 backdrop-blur">
         <CardHeader className="pb-2 flex items-center justify-between">
           <CardTitle className="text-lg font-semibold text-slate-900">Synthèse</CardTitle>
@@ -526,9 +520,8 @@ function TravauxTab() {
           </button>
         </CardHeader>
         <CardContent ref={synthRef}>
-          {/* Tableau synthèse par catégorie */}
           <div className="overflow-x-auto">
-            <table className="w-full text-sm border-separate border-spacing-y-1">
+            <table className={`w-full ${compact ? "text-[11px]" : "text-sm"} border-separate border-spacing-y-1`}>
               <thead>
                 <tr className="text-left text-slate-600">
                   <th className="px-2 py-1">Catégorie</th>
@@ -567,7 +560,6 @@ function TravauxTab() {
             </table>
           </div>
 
-          {/* Réglages récap synthèse */}
           <div className="mt-4 grid grid-cols-3 gap-3">
             <Kpi label="Niveau par défaut" value={defaultLevel} />
             <Kpi label="TVA" value={`${fmt(tva * 100)} %`} />
@@ -578,7 +570,6 @@ function TravauxTab() {
     </>
   );
 }
-
 /* ------------ Onglet EURL ------------ */
 function CalculateurEURL({
   eurl,
