@@ -547,25 +547,6 @@ function TravauxTab({
   );
 }
 
-// ---- Catalogue (state + fetch) ----
-const [catalogue, setCatalogue] = useState<CatalogueItem[]>(FALLBACK_CATALOGUE);
-
-useEffect(() => {
-  let cancelled = false;
-  (async () => {
-    try {
-      const res = await fetch(SHEET_CSV_URL, { method: "GET" });
-      if (!res.ok) throw new Error("http error");
-      const csv = await res.text();
-      const parsed = parseCatalogueCsv(csv);
-      if (!cancelled && parsed.length) setCatalogue(parsed);
-    } catch {
-      // fallback silencieux : on conserve FALLBACK_CATALOGUE
-    }
-  })();
-  return () => { cancelled = true; };
-}, []);
-
 /* ------------ EURL ------------ */
 function CalculateurEURL({
   eurl,
@@ -761,6 +742,24 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem("calc:sccv", JSON.stringify(sccv)); } catch {} }, [sccv]);
   useEffect(() => { try { localStorage.setItem("calc:travaux", JSON.stringify(travaux)); } catch {} }, [travaux]);
   useEffect(() => { try { localStorage.setItem("calc:tab", tab); } catch {} }, [tab]);
+// ---- Catalogue (state + fetch) ----
+const [catalogue, setCatalogue] = useState<CatalogueItem[]>(FALLBACK_CATALOGUE);
+
+useEffect(() => {
+  let cancelled = false;
+  (async () => {
+    try {
+      const res = await fetch(SHEET_CSV_URL, { method: "GET" });
+      if (!res.ok) throw new Error("http error");
+      const csv = await res.text();
+      const parsed = parseCatalogueCsv(csv);
+      if (!cancelled && parsed.length) setCatalogue(parsed);
+    } catch {
+      // fallback silencieux : on conserve FALLBACK_CATALOGUE
+    }
+  })();
+  return () => { cancelled = true; };
+}, []);
 
 
   // Lien SCCV → EURL (CA travaux)
