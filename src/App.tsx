@@ -149,7 +149,26 @@ function Kpi({ label, value }: { label: string; value: string }) {
 /* ---------- Catalogue (live depuis Google Sheets) ---------- */
 const SHEET_ID = "1RqfPjc9r-jFrZksmYb5tOwTfjKbgY8Sx4BORMsVwZXo";
 const SHEET_GID = "1104107230";
-const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
+const SHEET_URL = "https://script.google.com/macros/s/AKfyc.../exec";
+useEffect(() => {
+  let cancelled = false;
+  (async () => {
+    try {
+      // Choisis la bonne URL selon ta méthode (CSV public ou Apps Script)
+      const res = await fetch(SHEET_URL); // ou SHEET_URL de l'Apps Script
+      if (!res.ok) throw new Error("http error");
+
+      // CSV -> parse ;    Apps Script -> .json()
+      const text = await res.text();
+      const parsed = parseCatalogueCsv(text); // <- ta fonction utilitaire
+      if (!cancelled && parsed.length) setCatalogue(parsed);
+    } catch (_e) {
+      // on garde le FALLBACK_CATALOGUE
+    }
+  })();
+  return () => { cancelled = true; };
+}, []);
+
 
 const FALLBACK_CATALOGUE: CatalogueItem[] = [
   { categorie: "GROS ŒUVRE", sousPoste: "Démolition cloison simple", unite: "m²", prix: { bas: 10, moyen: 15, haut: 25 } },
@@ -217,7 +236,6 @@ function TravauxTab({
   openExportSelector,
   chiffrageAnchorRef,
   synthRef,
-  
 }: {
   travaux: TravauxState;
   setTravaux: (t: TravauxState) => void;
@@ -748,7 +766,7 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(SHEET_CSV_URL, { method: "GET" });
+        const res = await fetch(SHEET_URL, { method: "GET" });
         if (!res.ok) throw new Error("http error");
         const csv = await res.text();
         const parsed = parseCatalogueCsv(csv);
@@ -992,7 +1010,7 @@ const runExcelExport = async () => {
   // UI du sélecteur (même pour tous)
   const [includeExcel, setIncludeExcel] = useState(true);
 
-  return (
+   return (
     <div className="min-h-screen p-5 md:p-7 bg-gradient-to-b from-slate-50 to-zinc-100 text-slate-900">
       {/* Dialog export (commun) */}
       {showExport && (
@@ -1090,4 +1108,7 @@ const runExcelExport = async () => {
       </div>
     </div>
   );
+}
+function setCatalogue(parsed: CatalogueItem[]) {
+  throw new Error("Function not implemented.");
 }
