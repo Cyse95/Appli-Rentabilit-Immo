@@ -217,6 +217,7 @@ function TravauxTab({
   openExportSelector,
   chiffrageAnchorRef,
   synthRef,
+  
 }: {
   travaux: TravauxState;
   setTravaux: (t: TravauxState) => void;
@@ -435,85 +436,30 @@ function TravauxTab({
 
       {/* Drawer vertical (recentré, padding intérieur) */}
       {drawerOpen && (
-        <div className="fixed inset-0 z-50" data-html2canvas-ignore>
-          <div className="absolute inset-0 bg-black/40" onClick={closeDrawer} />
-          <div className="absolute top-0 right-0 h-full w-[420px] bg-white shadow-2xl p-4">
-            <div className="h-full w-full overflow-y-auto">
-              <div className="mx-2">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-lg font-semibold">{editIndex === null ? "Nouvelle ligne" : "Modifier la ligne"}</div>
-                  <button
-                    className="px-2 py-1 text-sm rounded-md border border-slate-200 hover:bg-slate-50"
-                    onClick={closeDrawer}
-                  >
-                    Fermer
-                  </button>
-                </div>
+  <div className="fixed inset-0 z-50 flex items-center justify-center" data-html2canvas-ignore>
+    {/* Fond assombri */}
+    <div className="absolute inset-0 bg-black/40" onClick={closeDrawer} />
 
-                {/* Sélection Catégorie / Sous-poste */}
-                <div className="space-y-2">
-                  <div>
-                    <Label className="text-xs text-slate-600">Catégorie</Label>
-                    <select
-                      className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
-                      value={draft.categorie || ""}
-                      onChange={(e) => {
-                        const cat = e.target.value || undefined;
-                        const firstSous = cat ? sousByCat[cat]?.[0]?.sousPoste : undefined;
-                        setDraft((d) => ({ ...d, categorie: cat, sousPoste: firstSous, commentaires: d.commentaires || "" }));
-                      }}
-                    >
-                      <option value="">—</option>
-                      {CATS.map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <Label className="text-xs text-slate-600">Sous-poste</Label>
-                    <select
-                      className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
-                      value={draft.sousPoste || ""}
-                      onChange={(e) => setDraft((d) => ({ ...d, sousPoste: e.target.value || undefined }))}
-                      disabled={!draft.categorie}
-                    >
-                      <option value="">{draft.categorie ? "—" : "Choisir catégorie"}</option>
-                      {(draft.categorie ? sousByCat[draft.categorie] || [] : []).map((sp) => (
-                        <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Champs numériques */}
-                <div className="grid grid-cols-2 gap-3 mt-3">
-                  <Num label="Quantité" value={draft.qte} onChange={(v) => setDraft((d) => ({ ...d, qte: v }))} />
-                  <Num label="Coeff. local" value={draft.coeffLocal ?? 1} onChange={(v) => setDraft((d) => ({ ...d, coeffLocal: v || 1 }))} />
-                  <TextField label="Unité (auto)" value={draft.unite || ""} onChange={() => {}} />
-                  <TextField label="Prix unitaire (moyen, auto)" value={String(draft.prixUnitaire || 0)} onChange={() => {}} />
-                  <TextField label="Total HT (auto)" value={`€ ${fmt(draft.totalHT)}`} onChange={() => {}} />
-                </div>
-
-                {/* Commentaires */}
-                <div className="mt-3">
-                  <Label className="text-xs text-slate-600">Commentaires</Label>
-                  <Input
-                    className="bg-white/60 h-8 px-2 py-1"
-                    value={draft.commentaires ?? ""}
-                    onChange={(e) => setDraft((d) => ({ ...d, commentaires: e.target.value }))}
-                    placeholder="Notes internes, précisions..."
-                  />
-                </div>
-
-                <div className="mt-4 flex justify-end gap-2">
-                  <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50" onClick={closeDrawer}>Annuler</button>
-                  <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" onClick={saveDraft}>Enregistrer</button>
-                </div>
-              </div>
-            </div>
-          </div>
+    {/* Fenêtre centrée et recalibrée */}
+    <div className="relative bg-white rounded-2xl shadow-2xl w-[90vw] max-w-[520px] max-h-[85vh] overflow-y-auto p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-lg font-semibold">
+          {editIndex === null ? "Nouvelle ligne" : "Modifier la ligne"}
         </div>
-      )}
+        <button
+          className="px-3 py-1 text-sm rounded-md border border-slate-200 hover:bg-slate-50"
+          onClick={closeDrawer}
+        >
+          Fermer
+        </button>
+      </div>
+
+      {/* ---- ton contenu actuel (Catégorie, Sous-poste, Num, TextField, etc.) ---- */}
+      {/* rien d’autre à changer ici */}
+    </div>
+  </div>
+)}
+
     </>
   );
 }
