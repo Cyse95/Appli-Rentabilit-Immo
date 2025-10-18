@@ -3,20 +3,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import html2pdf from "html2pdf.js";
+import * as XLSX from "xlsx";
 
 /* -------------------------------------------------------
    Calculette investissement immo
-   - Onglets : SCCV / EURL / TRAVAUX
-   - TRAVAUX : liste compacte -> édition dans un drawer vertical
+   - Onglets : SCCV / EURL / TRAVAUX (chiffrage via drawer)
    - Prix catalogue = "Moyen" uniquement
    - Catalogue chargé live depuis Google Sheets (CSV)
-   - Export : bouton dans chaque carte (SCCV/EURL/Travaux)
+   - Export (PDF/Excel) : même sélecteur pour tous les boutons "Export"
 -------------------------------------------------------- */
 
 type TabKey = "sccv" | "eurl" | "travaux";
-
 type Level = "Bas" | "Moyen" | "Haut";
-type RowLevel = "Par défaut" | Level;
 
 type EURLState = {
   url?: string;
@@ -50,14 +48,14 @@ type CatalogueItem = {
 };
 
 type ChiffrageRow = {
-  categorie?: string;      // A
-  sousPoste?: string;      // B
-  unite?: string;          // C (auto)
-  qte: number;             // D
-  prixUnitaire: number;    // E (auto = "moyen")
-  coeffLocal: number;      // F
-  totalHT: number;         // G (auto)
-  commentaires?: string;   // J
+  categorie?: string;
+  sousPoste?: string;
+  unite?: string;
+  qte: number;
+  prixUnitaire: number; // auto = "moyen"
+  coeffLocal: number;
+  totalHT: number;
+  commentaires?: string;
 };
 
 type TravauxState = {
@@ -71,112 +69,9 @@ const fmt = (n: number) =>
     Number.isFinite(n) ? n : 0
   );
 
-function Num({
-  label,
-  value,
-  onChange,
-  suffix,
-  disabled,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  suffix?: string;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="space-y-0.5">
-      <Label className="text-[10px] text-slate-500">{label}</Label>
-      <div className="flex items-center gap-1.5">
-        <Input
-          inputMode="decimal"
-          value={Number.isFinite(value) ? value : 0}
-          onChange={(e) =>
-            onChange(parseFloat(e.target.value.replace(",", ".")) || 0)
-          }
-          className={`bg-white/60 h-8 px-2 py-1 ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
-          disabled={disabled}
-          readOnly={disabled}
-        />
-        {suffix && (
-          <span className="text-[10px] text-slate-500 w-8 select-none">{suffix}</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TextField({
-  label,
-  value,
-  placeholder,
-  onChange,
-}: {
-  label: string;
-  value?: string;
-  placeholder?: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="space-y-0.5">
-      <Label className="text-[10px] text-slate-500">{label}</Label>
-      <Input
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="bg-white/60 h-8 px-2 py-1"
-      />
-    </div>
-  );
-}
-
-function Kpi({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-slate-200 p-2 text-[12px] bg-white/80">
-      <div className="text-slate-500 text-[10px] tracking-wide">{label}</div>
-      <div className="text-[13px] font-semibold text-slate-900">{value}</div>
-    </div>
-  );
-}
-
-function Tabs({
-  active,
-  onChange,
-}: {
-  active: TabKey;
-  onChange: (k: TabKey) => void;
-}) {
-  const btn = (isActive: boolean) =>
-    `px-3 py-1.5 rounded-lg text-sm transition-colors border ${
-      isActive
-        ? "bg-indigo-600 text-white border-indigo-600 shadow"
-        : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-    }`;
-  const items: TabKey[] = ["sccv", "eurl", "travaux"];
-  const labels: Record<TabKey, string> = { sccv: "SCCV", eurl: "EURL", travaux: "TRAVAUX" };
-  return (
-    <div className="flex gap-2 mb-3" data-html2canvas-ignore>
-      {items.map((k) => (
-        <button key={k} onClick={() => onChange(k)} className={btn(active === k)}>
-          {labels[k]}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mb-2">
-      <h2 className="text-lg font-semibold text-slate-900">{children}</h2>
-    </div>
-  );
-}
-
 /* ---------- Catalogue (live depuis Google Sheets) ---------- */
 const SHEET_ID = "1RqfPjc9r-jFrZksmYb5tOwTfjKbgY8Sx4BORMsVwZXo";
 const SHEET_GID = "1104107230";
-// Export CSV direct (lecture seule)
 const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
 
 const FALLBACK_CATALOGUE: CatalogueItem[] = [
@@ -186,37 +81,58 @@ const FALLBACK_CATALOGUE: CatalogueItem[] = [
   { categorie: "MENUISERIES", sousPoste: "Fenêtre PVC DV 120x135", unite: "U", prix: { bas: 350, moyen: 400, haut: 500 } },
 ];
 
-/* Parse CSV simple (attendu colonnes : categorie, sousPoste, unite, bas, moyen, haut, note) */
+/* CSV parser robuste (gère ; , tab, guillets, accents, en-têtes variées) */
+function smartSplit(line: string): string[] {
+  const out: string[] = [];
+  let cur = "", inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (!inQ && (c === ";" || c === "," || c === "\t")) {
+      out.push(cur); cur = "";
+    } else cur += c;
+  }
+  out.push(cur);
+  return out.map((x) => x.trim());
+}
+const norm = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/\s+/g, "");
+
 function parseCatalogueCsv(csv: string): CatalogueItem[] {
-  const rows = csv.split(/\r?\n/).filter(Boolean).map((l) => l.split(","));
-  if (!rows.length) return [];
-  const header = rows[0].map((h) => h.trim().toLowerCase());
-  const idx = (name: string) => header.indexOf(name);
-  const iCat = idx("categorie");
-  const iSous = idx("sousposte") !== -1 ? idx("sousposte") : idx("sous-poste");
-  const iUnite = idx("unite") !== -1 ? idx("unite") : idx("unité");
-  const iBas = idx("bas");
-  const iMoy = idx("moyen");
-  const iHaut = idx("haut");
-  const iNote = idx("note");
+  const lines = csv.split(/\r?\n/).filter((l) => l.trim().length);
+  if (!lines.length) return [];
+  const header = smartSplit(lines[0]).map(norm);
+  const pos = (aliases: string[]) =>
+    header.findIndex((h) => aliases.some((a) => h.includes(a)));
+
+  const iCat = pos(["categorie", "category"]);
+  const iSous = pos(["sousposte", "sous-poste", "sousposte", "poste"]);
+  const iUnite = pos(["unite", "unite", "unité"]);
+  const iBas = pos(["bas"]);
+  const iMoy = pos(["moyen", "defaut", "moy"]);
+  const iHaut = pos(["haut"]);
+  const iNote = pos(["note", "commentaire"]);
 
   const out: CatalogueItem[] = [];
-  for (let r = 1; r < rows.length; r++) {
-    const cells = rows[r];
-    const cat = cells[iCat]?.trim();
-    const sous = cells[iSous]?.trim();
-    const unite = cells[iUnite]?.trim() || "";
+  for (let r = 1; r < lines.length; r++) {
+    const cells = smartSplit(lines[r]);
+    const cat = iCat >= 0 ? cells[iCat] : "";
+    const sous = iSous >= 0 ? cells[iSous] : "";
     if (!cat || !sous) continue;
-    const bas = parseFloat((cells[iBas] || "").replace(",", ".")) || 0;
-    const moyen = parseFloat((cells[iMoy] || "").replace(",", ".")) || 0;
-    const haut = parseFloat((cells[iHaut] || "").replace(",", ".")) || 0;
-    const note = iNote >= 0 ? cells[iNote]?.trim() : undefined;
+    const unite = iUnite >= 0 ? cells[iUnite] : "";
+    const toNum = (v?: string) => parseFloat((v || "").replace(",", ".")) || 0;
+    const bas = toNum(iBas >= 0 ? cells[iBas] : undefined);
+    const moyen = toNum(iMoy >= 0 ? cells[iMoy] : undefined);
+    const haut = toNum(iHaut >= 0 ? cells[iHaut] : undefined);
+    const note = iNote >= 0 ? cells[iNote] : undefined;
     out.push({ categorie: cat, sousPoste: sous, unite, prix: { bas, moyen, haut }, note });
   }
   return out;
 }
 
-/* ------------ Onglet TRAVAUX (Drawer vertical) ------------ */
+/* ------------ TRAVAUX (drawer) ------------ */
 function TravauxTab({
   travaux,
   setTravaux,
@@ -234,16 +150,13 @@ function TravauxTab({
 }) {
   const { rows, tva } = travaux;
 
-  // indexation pour sélection
   const CATS = useMemo(
     () => Array.from(new Set(catalogue.map((c) => c.categorie))),
     [catalogue]
   );
   const sousByCat = useMemo(() => {
     const m: Record<string, CatalogueItem[]> = {};
-    catalogue.forEach((it) => {
-      (m[it.categorie] ||= []).push(it);
-    });
+    catalogue.forEach((it) => (m[it.categorie] ||= []).push(it));
     return m;
   }, [catalogue]);
 
@@ -260,32 +173,23 @@ function TravauxTab({
     return map;
   }, [rows]);
   const ttva = useMemo(() => totalHT * tva, [totalHT, tva]);
-  const ttc  = useMemo(() => totalHT + ttva, [totalHT, ttva]);
+  const ttc = useMemo(() => totalHT + ttva, [totalHT, ttva]);
 
-  // ----- Drawer state -----
+  // Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const emptyDraft: ChiffrageRow = { qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, commentaires: "" };
   const [draft, setDraft] = useState<ChiffrageRow>(emptyDraft);
 
-  const openNew = () => {
-    setEditIndex(null);
-    setDraft(emptyDraft);
-    setDrawerOpen(true);
-  };
-  const openEdit = (i: number) => {
-    setEditIndex(i);
-    setDraft(rows[i]);
-    setDrawerOpen(true);
-  };
+  const openNew = () => { setEditIndex(null); setDraft(emptyDraft); setDrawerOpen(true); };
+  const openEdit = (i: number) => { setEditIndex(i); setDraft(rows[i]); setDrawerOpen(true); };
   const closeDrawer = () => setDrawerOpen(false);
 
-  // recalcul en brouillon (utilise prix "moyen")
   useEffect(() => {
     if (!draft.categorie || !draft.sousPoste) return;
     const item = sousByCat[draft.categorie]?.find((x) => x.sousPoste === draft.sousPoste);
     if (!item) return;
-    const pu = item.prix.moyen || 0;
+    const pu = item.prix.moyen || 0; // UNIQUEMENT prix moyen
     const q = Number(draft.qte) || 0;
     const k = Number(draft.coeffLocal) || 1;
     setDraft((d) => ({ ...d, unite: item.unite, prixUnitaire: pu, totalHT: q * pu * k }));
@@ -294,19 +198,16 @@ function TravauxTab({
 
   const saveDraft = () => {
     const row = { ...draft };
-    if (editIndex === null) {
-      setTravaux({ ...travaux, rows: [...rows, row] });
-    } else {
-      const copy = [...rows];
-      copy[editIndex] = row;
+    if (editIndex === null) setTravaux({ ...travaux, rows: [...rows, row] });
+    else {
+      const copy = [...rows]; copy[editIndex] = row;
       setTravaux({ ...travaux, rows: copy });
     }
     setDrawerOpen(false);
   };
 
-  const removeRow = (i: number) => {
+  const removeRow = (i: number) =>
     setTravaux({ ...travaux, rows: rows.filter((_, idx) => idx !== i) });
-  };
 
   return (
     <>
@@ -350,10 +251,10 @@ function TravauxTab({
               <table className="w-full text-[12px]">
                 <thead className="bg-slate-50 text-left text-slate-600">
                   <tr>
-                    <th className="px-2 py-2 w-[24%]">Catégorie</th>
-                    <th className="px-2 py-2 w-[46%]">Sous-poste</th>
-                    <th className="px-2 py-2 w-[15%] text-right">Total HT (€)</th>
-                    <th className="px-2 py-2 w-[15%]"></th>
+                    <th className="px-2 py-2 w-[28%]">Catégorie</th>
+                    <th className="px-2 py-2 w-[52%]">Sous-poste</th>
+                    <th className="px-2 py-2 w-[12%] text-right">Total HT (€)</th>
+                    <th className="px-2 py-2 w-[8%]"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -450,90 +351,88 @@ function TravauxTab({
                   </tbody>
                 </table>
               </div>
-
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                <Kpi label="TVA (taux)" value={`${fmt(travaux.tva * 100)} %`} />
-                <Kpi label="Total HT calculé" value={`€ ${fmt(totalHT)}`} />
-                <Kpi label="Total TTC" value={`€ ${fmt(ttc)}`} />
-              </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Drawer vertical */}
+      {/* Drawer vertical (recentré, padding intérieur) */}
       {drawerOpen && (
         <div className="fixed inset-0 z-50" data-html2canvas-ignore>
           <div className="absolute inset-0 bg-black/40" onClick={closeDrawer} />
-          <div className="absolute top-0 right-0 h-full w-[380px] bg-white shadow-2xl p-4 overflow-y-auto">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-lg font-semibold">{editIndex === null ? "Nouvelle ligne" : "Modifier la ligne"}</div>
-              <button
-                className="px-2 py-1 text-sm rounded-md border border-slate-200 hover:bg-slate-50"
-                onClick={closeDrawer}
-              >
-                Fermer
-              </button>
-            </div>
+          <div className="absolute top-0 right-0 h-full w-[420px] bg-white shadow-2xl p-4">
+            <div className="h-full w-full overflow-y-auto">
+              <div className="mx-2">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-lg font-semibold">{editIndex === null ? "Nouvelle ligne" : "Modifier la ligne"}</div>
+                  <button
+                    className="px-2 py-1 text-sm rounded-md border border-slate-200 hover:bg-slate-50"
+                    onClick={closeDrawer}
+                  >
+                    Fermer
+                  </button>
+                </div>
 
-            {/* Sélection Catégorie / Sous-poste */}
-            <div className="space-y-2">
-              <div>
-                <Label className="text-xs text-slate-600">Catégorie</Label>
-                <select
-                  className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
-                  value={draft.categorie || ""}
-                  onChange={(e) => {
-                    const cat = e.target.value || undefined;
-                    const firstSous = cat ? sousByCat[cat]?.[0]?.sousPoste : undefined;
-                    setDraft((d) => ({ ...d, categorie: cat, sousPoste: firstSous, commentaires: d.commentaires || "" }));
-                  }}
-                >
-                  <option value="">—</option>
-                  {CATS.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                {/* Sélection Catégorie / Sous-poste */}
+                <div className="space-y-2">
+                  <div>
+                    <Label className="text-xs text-slate-600">Catégorie</Label>
+                    <select
+                      className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
+                      value={draft.categorie || ""}
+                      onChange={(e) => {
+                        const cat = e.target.value || undefined;
+                        const firstSous = cat ? sousByCat[cat]?.[0]?.sousPoste : undefined;
+                        setDraft((d) => ({ ...d, categorie: cat, sousPoste: firstSous, commentaires: d.commentaires || "" }));
+                      }}
+                    >
+                      <option value="">—</option>
+                      {CATS.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-xs text-slate-600">Sous-poste</Label>
+                    <select
+                      className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
+                      value={draft.sousPoste || ""}
+                      onChange={(e) => setDraft((d) => ({ ...d, sousPoste: e.target.value || undefined }))}
+                      disabled={!draft.categorie}
+                    >
+                      <option value="">{draft.categorie ? "—" : "Choisir catégorie"}</option>
+                      {(draft.categorie ? sousByCat[draft.categorie] || [] : []).map((sp) => (
+                        <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Champs numériques */}
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <Num label="Quantité" value={draft.qte} onChange={(v) => setDraft((d) => ({ ...d, qte: v }))} />
+                  <Num label="Coeff. local" value={draft.coeffLocal ?? 1} onChange={(v) => setDraft((d) => ({ ...d, coeffLocal: v || 1 }))} />
+                  <TextField label="Unité (auto)" value={draft.unite || ""} onChange={() => {}} />
+                  <TextField label="Prix unitaire (moyen, auto)" value={String(draft.prixUnitaire || 0)} onChange={() => {}} />
+                  <TextField label="Total HT (auto)" value={`€ ${fmt(draft.totalHT)}`} onChange={() => {}} />
+                </div>
+
+                {/* Commentaires */}
+                <div className="mt-3">
+                  <Label className="text-xs text-slate-600">Commentaires</Label>
+                  <Input
+                    className="bg-white/60 h-8 px-2 py-1"
+                    value={draft.commentaires ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, commentaires: e.target.value }))}
+                    placeholder="Notes internes, précisions..."
+                  />
+                </div>
+
+                <div className="mt-4 flex justify-end gap-2">
+                  <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50" onClick={closeDrawer}>Annuler</button>
+                  <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" onClick={saveDraft}>Enregistrer</button>
+                </div>
               </div>
-              <div>
-                <Label className="text-xs text-slate-600">Sous-poste</Label>
-                <select
-                  className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
-                  value={draft.sousPoste || ""}
-                  onChange={(e) => setDraft((d) => ({ ...d, sousPoste: e.target.value || undefined }))}
-                  disabled={!draft.categorie}
-                >
-                  <option value="">{draft.categorie ? "—" : "Choisir catégorie"}</option>
-                  {(draft.categorie ? sousByCat[draft.categorie] || [] : []).map((sp) => (
-                    <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Champs numériques */}
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <Num label="Quantité" value={draft.qte} onChange={(v) => setDraft((d) => ({ ...d, qte: v }))} />
-              <Num label="Coeff. local" value={draft.coeffLocal ?? 1} onChange={(v) => setDraft((d) => ({ ...d, coeffLocal: v || 1 }))} />
-              <TextField label="Unité (auto)" value={draft.unite || ""} onChange={() => {}} />
-              <TextField label="Prix unitaire (moyen, auto)" value={String(draft.prixUnitaire || 0)} onChange={() => {}} />
-              <TextField label="Total HT (auto)" value={`€ ${fmt(draft.totalHT)}`} onChange={() => {}} />
-            </div>
-
-            {/* Commentaires */}
-            <div className="mt-3">
-              <Label className="text-xs text-slate-600">Commentaires</Label>
-              <Input
-                className="bg-white/60 h-8 px-2 py-1"
-                value={draft.commentaires ?? ""}
-                onChange={(e) => setDraft((d) => ({ ...d, commentaires: e.target.value }))}
-                placeholder="Notes internes, précisions..."
-              />
-            </div>
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50" onClick={closeDrawer}>Annuler</button>
-              <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" onClick={saveDraft}>Enregistrer</button>
             </div>
           </div>
         </div>
@@ -548,13 +447,13 @@ function CalculateurEURL({
   setEurl,
   sccvTravaux,
   cardRef,
-  openExportSelector,
+  onExportClick,
 }: {
   eurl: EURLState;
   setEurl: (s: EURLState) => void;
   sccvTravaux: number;
   cardRef: React.RefObject<HTMLDivElement>;
-  openExportSelector: () => void;
+  onExportClick: () => void; // <= même fonction partout
 }) {
   const caTotal = useMemo(() => eurl.travaux, [eurl.travaux]);
   const coutMat = useMemo(() => (eurl.travaux * eurl.matPct) / 100, [eurl.travaux, eurl.matPct]);
@@ -579,7 +478,7 @@ function CalculateurEURL({
             EURL – Rentabilité brute
           </CardTitle>
           <button
-            onClick={openExportSelector}
+            onClick={onExportClick}
             className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs shadow hover:bg-indigo-700"
             data-html2canvas-ignore
             title="Export"
@@ -618,12 +517,12 @@ function CalculateurSCCV({
   sccv,
   setSccv,
   cardRef,
-  openExportSelector,
+  onExportClick,
 }: {
   sccv: SCCVState;
   setSccv: (s: SCCVState) => void;
   cardRef: React.RefObject<HTMLDivElement>;
-  openExportSelector: () => void;
+  onExportClick: () => void; // <= même fonction partout
 }) {
   const travaux = useMemo(() => sccv.prixRenovM2 * sccv.surfaceM2, [sccv.prixRenovM2, sccv.surfaceM2]);
   const base = useMemo(() => sccv.bien + travaux, [sccv.bien, travaux]);
@@ -654,7 +553,7 @@ function CalculateurSCCV({
             SCCV – Marchand de biens
           </CardTitle>
           <button
-            onClick={openExportSelector}
+            onClick={onExportClick}
             className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs shadow hover:bg-indigo-700"
             data-html2canvas-ignore
             title="Export"
@@ -700,7 +599,6 @@ const DEFAULT_EURL: EURLState = {
   tauxIS: 25,
   manualTravaux: false,
 };
-
 const DEFAULT_SCCV: SCCVState = {
   url: "",
   bien: 199000,
@@ -713,7 +611,6 @@ const DEFAULT_SCCV: SCCVState = {
   fraisAgencePct: 5,
   regimeHoldingPct: 1.25,
 };
-
 const DEFAULT_TRAVAUX: TravauxState = {
   rows: [{ qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, commentaires: "" }],
   tva: 0.10,
@@ -723,7 +620,6 @@ export default function App() {
   const [tab, setTab] = useState<TabKey>(() => {
     try { return (localStorage.getItem("calc:tab") as TabKey) || "sccv"; } catch { return "sccv"; }
   });
-
   const [eurl, setEurl] = useState<EURLState>(() => {
     try { const raw = localStorage.getItem("calc:eurl"); return raw ? { ...DEFAULT_EURL, ...JSON.parse(raw) } : DEFAULT_EURL; }
     catch { return DEFAULT_EURL; }
@@ -752,9 +648,7 @@ export default function App() {
         const csv = await res.text();
         const parsed = parseCatalogueCsv(csv);
         if (!cancelled && parsed.length) setCatalogue(parsed);
-      } catch (_e) {
-        // fallback silencieux
-      }
+      } catch (_e) { /* fallback silencieux */ }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -768,7 +662,7 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sccvTravaux, eurl.manualTravaux]);
 
-  // ---------- EXPORT (sélecteur & rendu) ----------
+  // ---------- EXPORT central (même pour tous les boutons) ----------
   const sccvRef = useRef<HTMLDivElement>(null);
   const eurlRef = useRef<HTMLDivElement>(null);
   const travauxChiffrageRef = useRef<HTMLDivElement>(null);
@@ -789,11 +683,74 @@ export default function App() {
   const [targets, setTargets] = useState<ExportTargets>(defaultTargetsByTab[tab]);
   useEffect(() => { setTargets(defaultTargetsByTab[tab]); }, [tab]);
 
-  const runExport = async () => {
+  const openExportSelector = () => setShowExport(true);
+
+  // Remplace inputs/select/textarea par texte (pour PDF sans champs)
+  const sanitizeNode = (node: HTMLElement) => {
+    node.querySelectorAll("input, textarea, select").forEach((el) => {
+      const span = document.createElement("span");
+      const isInput = (el as HTMLInputElement).value !== undefined;
+      const value =
+        (el as HTMLInputElement).value ??
+        ((el as HTMLSelectElement).selectedOptions?.[0]?.text ?? "");
+      span.textContent = value || "";
+      span.style.whiteSpace = "pre-wrap";
+      el.parentElement?.replaceChild(span, el);
+    });
+    node.querySelectorAll("[data-html2canvas-ignore]").forEach((el) => el.remove());
+    return node;
+  };
+
+  // Sous-table TRAVAUX chiffrage (colonnes limitées pour PDF)
+  const buildTravauxChiffrageTable = () => {
+    const wrap = document.createElement("div");
+    const table = document.createElement("table");
+    table.style.width = "100%";
+    table.style.fontSize = "12px";
+    table.style.borderCollapse = "separate";
+    table.style.borderSpacing = "0 6px";
+    const thead = document.createElement("thead");
+    const trh = document.createElement("tr");
+    ["Catégorie","Sous-poste","Unité","Qté","Prix unitaire (€)","Commentaires","Total (€)"].forEach((h) => {
+      const th = document.createElement("th");
+      th.textContent = h; th.style.textAlign = ["Qté","Prix unitaire (€)","Total (€)"].includes(h) ? "right" : "left";
+      th.style.padding = "4px 6px"; th.style.color = "#475569";
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh); table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    travaux.rows.forEach((r) => {
+      const tr = document.createElement("tr");
+      const cells = [
+        r.categorie ?? "",
+        r.sousPoste ?? "",
+        r.unite ?? "",
+        (Number.isFinite(r.qte) ? r.qte : 0).toString(),
+        (Number.isFinite(r.prixUnitaire) ? r.prixUnitaire : 0).toString(),
+        r.commentaires ?? "",
+        (Number.isFinite(r.totalHT) ? r.totalHT : 0).toString(),
+      ];
+      cells.forEach((c, idx) => {
+        const td = document.createElement("td");
+        td.textContent = idx === 6 || idx === 4 || idx === 3 ? fmt(parseFloat(c) || 0) : c;
+        td.style.textAlign = [3,4,6].includes(idx) ? "right" : "left";
+        td.style.padding = "4px 6px";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
+  };
+
+  // EXPORT PDF
+  const runPdfExport = async () => {
     const wrap = document.createElement("div");
     wrap.style.padding = "16px";
     wrap.style.background = "#ffffff";
-    const addCloned = (ref?: React.RefObject<HTMLDivElement>, title?: string) => {
+
+    const addCloned = (ref?: React.RefObject<HTMLDivElement>, title?: string, sanitize = true) => {
       if (!ref?.current) return;
       const page = document.createElement("div");
       page.style.pageBreakAfter = "always";
@@ -804,13 +761,24 @@ export default function App() {
         h.style.margin = "0 0 8px";
         page.appendChild(h);
       }
-      page.appendChild(ref.current.cloneNode(true));
+      const cloned = ref.current.cloneNode(true) as HTMLElement;
+      page.appendChild(sanitize ? sanitizeNode(cloned) : cloned);
       wrap.appendChild(page);
     };
+
     if (targets.sccv) addCloned(sccvRef, "SCCV – Marchand de biens");
     if (targets.eurl) addCloned(eurlRef, "EURL – Rentabilité brute");
     if (targets.travauxSynth) addCloned(travauxSynthRef, "TRAVAUX – Synthèse");
-    if (targets.travauxChiffrage) addCloned(travauxChiffrageRef, "TRAVAUX – Chiffrage");
+    if (targets.travauxChiffrage) {
+      const page = document.createElement("div");
+      page.style.pageBreakAfter = "always";
+      const h = document.createElement("h1");
+      h.textContent = "TRAVAUX – Chiffrage"; h.style.fontSize = "18px"; h.style.margin = "0 0 8px";
+      page.appendChild(h);
+      page.appendChild(buildTravauxChiffrageTable());
+      wrap.appendChild(page);
+    }
+
     if (!wrap.childNodes.length) { setShowExport(false); return; }
     const now = new Date();
     const pad = (n: number) => n.toString().padStart(2, "0");
@@ -824,15 +792,110 @@ export default function App() {
       pagebreak: { mode: ["css", "legacy"] as const },
     };
     await (html2pdf() as any).set(opt).from(wrap).save();
-    setShowExport(false);
   };
+
+  // EXPORT EXCEL (formules + 1 onglet / section)
+  const runExcelExport = () => {
+    const wb = XLSX.utils.book_new();
+
+    // SCCV sheet
+    {
+      const rows = [
+        ["Paramètre", "Valeur", "Unité"],
+        ["Prix d'achat (Bien)", sccv.bien, "€"],
+        ["Prix rénovation (€/m²)", sccv.prixRenovM2, "€"],
+        ["Surface", sccv.surfaceM2, "m²"],
+        ["Prix revente (€/m²)", sccv.prixReventeM2, "€"],
+        ["Apport (%)", sccv.apportPct, "%"],
+        ["Charge crédit (%)", sccv.chargeCreditPct, "%"],
+        ["Frais dossier (%)", sccv.fraisDossierPct, "%"],
+        ["Frais agence (%)", sccv.fraisAgencePct, "%"],
+        ["Régime holding (%)", sccv.regimeHoldingPct, "%"],
+        [],
+        ["Travaux (€) = PrixRenov/m² * Surface", { f: "B3*B4" }],
+        ["Base (€) = Bien + Travaux", { f: "B2+B12" }],
+        ["Apport (€) = % * Base", { f: "B6/100*B13" }],
+        ["Charge crédit (€) = (Base-Apport)*%", { f: "(B13-B14)*B7/100" }],
+        ["Frais dossier (€) = (Base-Apport)*%", { f: "(B13-B14)*B8/100" }],
+        ["Frais agence (€) = Base*%", { f: "B13*B9/100" }],
+        ["Coût projet (€) = Bien + Travaux + Agence + Dossier + Crédit", { f: "B2+B12+B16+B15+B14" }],
+        ["Total après apport (€) = Coût - Apport", { f: "B17-B14" }],
+        ["Prix revente (€) = Surface*PrixRev/m²", { f: "B4*B5" }],
+        ["Marge brute (€) = Revente - Coût + Apport", { f: "B19-B17+B14" }],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows as any);
+      XLSX.utils.book_append_sheet(wb, ws, "SCCV");
+    }
+
+    // EURL sheet
+    {
+      const rows = [
+        ["Paramètre", "Valeur", "Unité"],
+        ["CA (Travaux) €", eurl.travaux, "€"],
+        ["% Matériaux", eurl.matPct, "%"],
+        ["% Main d'œuvre", eurl.moPct, "%"],
+        ["% Autres frais", eurl.caAutresPct, "%"],
+        ["Taux IS (%)", eurl.tauxIS, "%"],
+        [],
+        ["Coût matériaux (€)", { f: "B2*B3/100" }],
+        ["Coût MO (€)", { f: "B2*B4/100" }],
+        ["Autres coûts (€)", { f: "B2*B5/100" }],
+        ["Bénéfice brut (€)", { f: "B2-(B8+B9+B10)" }],
+        ["Impôts IS (€)", { f: "MAX(B11,0)*B6/100" }],
+        ["Bénéfice net (€)", { f: "B11-B12" }],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows as any);
+      XLSX.utils.book_append_sheet(wb, ws, "EURL");
+    }
+
+    // TRAVAUX sheet (toutes colonnes + formules)
+    {
+      const header = ["Catégorie","Sous-poste","Unité","Qté","Prix unitaire (€)","Coeff","Total (€)","Commentaires"];
+      const body = travaux.rows.map((r) => [
+        r.categorie ?? "",
+        r.sousPoste ?? "",
+        r.unite ?? "",
+        r.qte || 0,
+        r.prixUnitaire || 0,
+        r.coeffLocal || 1,
+        null, // formule après
+        r.commentaires ?? "",
+      ]);
+      const ws = XLSX.utils.aoa_to_sheet([header, ...body] as any);
+      // Formule Total = D * E * F (par ligne)
+      for (let i = 0; i < body.length; i++) {
+        const rowIndex = 2 + i; // 1-based + header
+        const cell = XLSX.utils.encode_cell({ r: i + 1, c: 6 }); // colonne G (index 6)
+        (ws as any)[cell] = { t: "n", f: `D${rowIndex}*E${rowIndex}*F${rowIndex}` };
+      }
+      // Total général (à la fin)
+      const totalRow = body.length + 2;
+      const totalCell = XLSX.utils.encode_cell({ r: totalRow - 1, c: 6 });
+      (ws as any)[totalCell] = { t: "n", f: `SUM(G2:G${totalRow - 1})` };
+      XLSX.utils.book_append_sheet(wb, ws, "TRAVAUX");
+    }
+
+    XLSX.writeFile(wb, "Export_Calculette_Immo.xlsx");
+  };
+
+  const runExport = async () => {
+    setShowExport(false);
+    // On lance PDF puis Excel si l’utilisateur a choisi Excel
+    // (ici, on laisse toujours le choix dans le sélecteur ci-dessous)
+    await runPdfExport();
+    // Excel optionnel : checkbox ci-dessous
+    if (includeExcel) runExcelExport();
+  };
+
+  // UI du sélecteur (même pour tous)
+  const [includeExcel, setIncludeExcel] = useState(true);
 
   return (
     <div className="min-h-screen p-5 md:p-7 bg-gradient-to-b from-slate-50 to-zinc-100 text-slate-900">
-      {/* Dialog export */}
+      {/* Dialog export (commun) */}
       {showExport && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" data-html2canvas-ignore>
-          <div className="bg-white rounded-2xl shadow-xl w-[360px] p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-[380px] p-4">
             <div className="text-lg font-semibold text-slate-900 mb-2">Export</div>
             <div className="text-sm text-slate-600 mb-3">Choisis les pages à inclure :</div>
             <div className="space-y-2 text-sm">
@@ -853,6 +916,12 @@ export default function App() {
                 <span>TRAVAUX – Chiffrage</span>
               </label>
             </div>
+            <div className="mt-4 border-t pt-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={includeExcel} onChange={(e) => setIncludeExcel(e.target.checked)} />
+                <span>Inclure un export Excel (avec formules, 1 onglet/section)</span>
+              </label>
+            </div>
             <div className="mt-4 flex justify-end gap-2">
               <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50" onClick={() => setShowExport(false)}>Annuler</button>
               <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" onClick={runExport}>Export</button>
@@ -862,19 +931,27 @@ export default function App() {
       )}
 
       <div className="max-w-5xl mx-auto">
-        {/* Titre (pas de bouton export global en haut : demandé) */}
         <div className="flex items-center justify-between mb-3" data-html2canvas-ignore>
           <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900">
             Calculette investissement immo
           </h1>
-          {/* Rien ici pour SCCV/EURL (tu voulais enlever le bouton du haut) */}
-          {tab === "travaux" && (
-            <div className="invisible">placeholder</div>
-          )}
         </div>
 
         {/* Tabs */}
-        <Tabs active={tab} onChange={setTab} />
+        <div className="flex gap-2 mb-3" data-html2canvas-ignore>
+          {(["sccv","eurl","travaux"] as TabKey[]).map((k) => (
+            <button
+              key={k}
+              className={`px-3 py-1.5 rounded-lg text-sm transition-colors border ${
+                tab === k ? "bg-indigo-600 text-white border-indigo-600 shadow"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+              }`}
+              onClick={() => setTab(k)}
+            >
+              {k.toUpperCase()}
+            </button>
+          ))}
+        </div>
 
         {/* Sections */}
         {tab === "sccv" && (
@@ -882,7 +959,7 @@ export default function App() {
             sccv={sccv}
             setSccv={setSccv}
             cardRef={sccvRef}
-            openExportSelector={() => setShowExport(true)}
+            onExportClick={openExportSelector}
           />
         )}
         {tab === "eurl" && (
@@ -891,7 +968,7 @@ export default function App() {
             setEurl={setEurl}
             sccvTravaux={sccvTravaux}
             cardRef={eurlRef}
-            openExportSelector={() => setShowExport(true)}
+            onExportClick={openExportSelector}
           />
         )}
         {tab === "travaux" && (
@@ -899,7 +976,7 @@ export default function App() {
             travaux={travaux}
             setTravaux={setTravaux}
             catalogue={catalogue}
-            openExportSelector={() => setShowExport(true)}
+            openExportSelector={openExportSelector}
             chiffrageAnchorRef={travauxChiffrageRef}
             synthRef={travauxSynthRef}
           />
