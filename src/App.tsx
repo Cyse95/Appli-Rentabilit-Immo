@@ -149,13 +149,14 @@ function Kpi({ label, value }: { label: string; value: string }) {
 /* ---------- Catalogue (live depuis Google Sheets) ---------- */
 const SHEET_ID = "1RqfPjc9r-jFrZksmYb5tOwTfjKbgY8Sx4BORMsVwZXo";
 const SHEET_GID = "1104107230";
-const SHEET_URL = "https://script.google.com/macros/s/AKfyc.../exec";
+/*const SHEET_URL = "https://script.google.com/macros/s/AKfyc.../exec";*/
+const SHEET_CSV_URL =`https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
 useEffect(() => {
   let cancelled = false;
   (async () => {
     try {
       // Choisis la bonne URL selon ta méthode (CSV public ou Apps Script)
-      const res = await fetch(SHEET_URL); // ou SHEET_URL de l'Apps Script
+      const res = await fetch(SHEET_CSV_URL); // ou SHEET_URL de l'Apps Script
       if (!res.ok) throw new Error("http error");
 
       // CSV -> parse ;    Apps Script -> .json()
@@ -564,6 +565,25 @@ function TravauxTab({
   );
 }
 
+// ---- Catalogue (state + fetch) ----
+const [catalogue, setCatalogue] = useState<CatalogueItem[]>(FALLBACK_CATALOGUE);
+
+useEffect(() => {
+  let cancelled = false;
+  (async () => {
+    try {
+      const res = await fetch(SHEET_CSV_URL, { method: "GET" });
+      if (!res.ok) throw new Error("http error");
+      const csv = await res.text();
+      const parsed = parseCatalogueCsv(csv);
+      if (!cancelled && parsed.length) setCatalogue(parsed);
+    } catch {
+      // fallback silencieux : on conserve FALLBACK_CATALOGUE
+    }
+  })();
+  return () => { cancelled = true; };
+}, []);
+
 /* ------------ EURL ------------ */
 function CalculateurEURL({
   eurl,
@@ -760,21 +780,6 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem("calc:travaux", JSON.stringify(travaux)); } catch {} }, [travaux]);
   useEffect(() => { try { localStorage.setItem("calc:tab", tab); } catch {} }, [tab]);
 
-  // ---- Catalogue (live) ----
-  const [catalogue, setCatalogue] = useState<CatalogueItem[]>(FALLBACK_CATALOGUE);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(SHEET_URL, { method: "GET" });
-        if (!res.ok) throw new Error("http error");
-        const csv = await res.text();
-        const parsed = parseCatalogueCsv(csv);
-        if (!cancelled && parsed.length) setCatalogue(parsed);
-      } catch (_e) { /* fallback silencieux */ }
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   // Lien SCCV → EURL (CA travaux)
   const sccvTravaux = useMemo(() => sccv.prixRenovM2 * sccv.surfaceM2, [sccv.prixRenovM2, sccv.surfaceM2]);
@@ -1108,7 +1113,4 @@ const runExcelExport = async () => {
       </div>
     </div>
   );
-}
-function setCatalogue(parsed: CatalogueItem[]) {
-  throw new Error("Function not implemented.");
 }
