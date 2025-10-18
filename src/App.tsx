@@ -7,10 +7,10 @@ import html2pdf from "html2pdf.js";
 /* -------------------------------------------------------
    NOUVEL ONGLET : TRAVAUX (catalogue + chiffrage + synthèse)
    - Colonnes A..J comme l’Excel "Chiffrage"
-   - Automatisme: Sous-poste dépend de Catégorie
-   - Unité & Prix unitaire auto (Bas/Moyen/Haut + "Par défaut")
-   - Total HT, % du total, Synthèse par catégorie + TVA/TTC
-   - Bouton: Exporter la SYNTHÈSE uniquement en PDF
+   - Sous-poste dépend de Catégorie
+   - Unité & Prix auto (Bas/Moyen/Haut ; "Par défaut" = Moyen)
+   - Total HT, % du total, Synthèse + TVA/TTC
+   - Export PDF : Synthèse uniquement
 -------------------------------------------------------- */
 
 type TabKey = "sccv" | "eurl" | "travaux";
@@ -221,32 +221,38 @@ const SOUS_POSTES_BY_CAT: Record<string, CatalogueItem[]> = CATALOGUE.reduce((ac
   return acc;
 }, {} as Record<string, CatalogueItem[]>);
 
-/* ------------ Onglet TRAVAUX (Chiffrage + Synthèse) ------------ */
+/* ------------ TRAVAUX types (état global + persistance) ------------ */
 type ChiffrageRow = {
   categorie?: string;      // A
   sousPoste?: string;      // B
   unite?: string;          // C (auto)
   qte: number;             // D
   prixUnitaire: number;    // E (auto selon niveau)
-  coeffLocal: number;      // F (x1 par défaut)
+  coeffLocal: number;      // F
   totalHT: number;         // G (auto)
   pct: number;             // H (auto)
-  niveau: RowLevel;        // I ("Par défaut" | Bas | Moyen | Haut)
+  niveau: RowLevel;        // I
   commentaires?: string;   // J
 };
 
-const DEFAULT_LEVEL: Level = "Moyen";
-const DEFAULT_TVA = 0.10;
-const START_ROWS = 12;
+type TravauxState = {
+  rows: ChiffrageRow[];
+  tva: number;            // 0.10 = 10%
+  showAdvanced: boolean;  // afficher H & J ?
+};
 
-function TravauxTab() {
-  const [defaultLevel, setDefaultLevel] = useState<Level>(DEFAULT_LEVEL);
-  const [tva, setTva] = useState<number>(DEFAULT_TVA); // 0.10 = 10%
-  const [compact, setCompact] = useState(true); // ✅ mode compact par défaut
-  const [rows, setRows] = useState<ChiffrageRow[]>(
-    // ✅ 1 seule ligne par défaut
-    [{ qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }]
-  );
+const DEFAULT_PAR_DEFAUT: Level = "Moyen";
+const DEFAULT_TVA = 0.10;
+
+/* ------------ Onglet TRAVAUX (Chiffrage + Synthèse) ------------ */
+function TravauxTab({
+  travaux,
+  setTravaux,
+}: {
+  travaux: TravauxState;
+  setTravaux: (t: TravauxState) => void;
+}) {
+  const { rows, tva, showAdvanced } = travaux;
 
   const totalHT = useMemo(
     () => rows.reduce((s, r) => s + (Number.isFinite(r.totalHT) ? r.totalHT : 0), 0),
@@ -265,74 +271,95 @@ function TravauxTab() {
   const ttva = useMemo(() => totalHT * tva, [totalHT, tva]);
   const ttc  = useMemo(() => totalHT + ttva, [totalHT, ttva]);
 
-  // recalcul d’une ligne
+  // --- recalcul d’une ligne ---
   const recalcRow = (idx: number, base?: Partial<ChiffrageRow>) => {
-    setRows((prev) => {
-      const r = { ...prev[idx], ...base };
+    const r = { ...rows[idx], ...base };
 
-      // Catégorie/sous-poste -> unité + prix
-      if (r.categorie && r.sousPoste) {
-        const item = SOUS_POSTES_BY_CAT[r.categorie]?.find((x) => x.sousPoste === r.sousPoste);
-        if (item) {
-          r.unite = item.unite;
-          const level: Level = r.niveau === "Par défaut" ? defaultLevel : (r.niveau as Level);
-          r.prixUnitaire =
-            level === "Bas" ? item.prix.bas :
-            level === "Haut" ? item.prix.haut : item.prix.moyen;
-        }
+    // Catégorie/sous-poste -> unité + prix
+    if (r.categorie && r.sousPoste) {
+      const item = SOUS_POSTES_BY_CAT[r.categorie]?.find((x) => x.sousPoste === r.sousPoste);
+      if (item) {
+        r.unite = item.unite;
+        const level: Level = r.niveau === "Par défaut" ? DEFAULT_PAR_DEFAUT : (r.niveau as Level);
+        r.prixUnitaire =
+          level === "Bas" ? item.prix.bas :
+          level === "Haut" ? item.prix.haut : item.prix.moyen;
       }
+    }
 
-      // Total HT
-      const q = Number(r.qte) || 0;
-      const pu = Number(r.prixUnitaire) || 0;
-      const k = Number(r.coeffLocal) || 1;
-      r.totalHT = q * pu * k;
+    // Total HT
+    const q = Number(r.qte) || 0;
+    const pu = Number(r.prixUnitaire) || 0;
+    const k = Number(r.coeffLocal) || 1;
+    r.totalHT = q * pu * k;
 
-      const copy = [...prev];
-      copy[idx] = r;
-      const sum = copy.reduce((s, x) => s + (Number.isFinite(x.totalHT) ? x.totalHT : 0), 0);
-      copy.forEach((x) => (x.pct = sum > 0 ? x.totalHT / sum : 0));
-      return copy;
-    });
+    const copy = [...rows];
+    copy[idx] = r;
+    const sum = copy.reduce((s, x) => s + (Number.isFinite(x.totalHT) ? x.totalHT : 0), 0);
+    copy.forEach((x) => (x.pct = sum > 0 ? x.totalHT / sum : 0));
+
+    setTravaux({ ...travaux, rows: copy });
   };
 
   const setCell = (idx: number, patch: Partial<ChiffrageRow>) => recalcRow(idx, patch);
+
   const handleCatChange = (idx: number, cat?: string) => {
     const firstSous = cat ? SOUS_POSTES_BY_CAT[cat]?.[0]?.sousPoste : undefined;
-    recalcRow(idx, { categorie: cat, sousPoste: firstSous, unite: undefined, prixUnitaire: 0 });
+    recalcRow(idx, {
+      categorie: cat,
+      sousPoste: firstSous,
+      unite: undefined,
+      prixUnitaire: 0,
+    });
   };
+
   const handleSousChange = (idx: number, sous?: string) => recalcRow(idx, { sousPoste: sous });
   const handleLevelChange = (idx: number, lvl: RowLevel) => recalcRow(idx, { niveau: lvl });
 
   const addRow = () => {
-    setRows((prev) => [...prev, { qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }]);
+    setTravaux({
+      ...travaux,
+      rows: [...rows, { qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }],
+    });
   };
-  const removeRow = (i: number) => setRows((prev) => prev.filter((_, idx) => idx !== i));
 
-  // Export PDF synthèse
+  const removeRow = (i: number) => {
+    setTravaux({ ...travaux, rows: rows.filter((_, idx) => idx !== i) });
+  };
+
+  const duplicateRow = (i: number) => {
+    const copy = [...rows];
+    const newRow = { ...copy[i] };
+    copy.splice(i + 1, 0, newRow);
+    setTravaux({ ...travaux, rows: copy });
+  };
+
+  // Export PDF : Synthèse seulement (ref sur div interne)
   const synthRef = useRef<HTMLDivElement>(null);
   const exportSynthPDF = async () => {
-    if (!synthRef.current) return;
+    await new Promise((r) => requestAnimationFrame(r));
+    const el = synthRef.current ?? document.getElementById("travaux-synth");
+    if (!el) return;
     const opt = {
       margin: 12,
       filename: `Synthese_Travaux_${new Date().toISOString().slice(0,10)}.pdf`,
       image: { type: "jpeg", quality: 0.98 },
       html2canvas: { scale: 2.2, useCORS: true, backgroundColor: "#ffffff" },
       jsPDF: { unit: "mm", format: "a4", orientation: "portrait" as const },
+      pagebreak: { mode: ["css", "legacy"] as const },
     };
-    await (html2pdf() as any).set(opt).from(synthRef.current).save();
+    await (html2pdf() as any).set(opt).from(el).save();
   };
 
-  const levelOptions: RowLevel[] = ["Par défaut", "Bas", "Moyen", "Haut"];
-
-  // classes compactes vs normales
-  const t = compact ? "text-[11px]" : "text-sm";
-  const py = compact ? "py-1.5" : "py-2";
+  // styles (compact permanent)
+  const t = "text-[11px]";
+  const py = "py-1.5";
   const px = "px-2";
-
-  // colonnes compactes < lg (puis plus larges en lg+)
-  const colsBase = "grid min-w-[1040px] grid-cols-[14ch,22ch,6ch,8ch,12ch,9ch,14ch,10ch,14ch,1fr]";
-  const colsLg   = "lg:grid-cols-[16ch,26ch,8ch,9ch,14ch,10ch,14ch,12ch,18ch,1fr]";
+  const colsBaseFull = "grid min-w-[1040px] grid-cols-[14ch,22ch,6ch,8ch,12ch,9ch,14ch,10ch,14ch,1fr]";
+  const colsLgFull   = "lg:grid-cols-[16ch,26ch,8ch,9ch,14ch,10ch,14ch,12ch,18ch,1fr]";
+  // Lite = sans H (% total) et J (Commentaires) → 8 colonnes visibles
+  const colsBaseLite = "grid min-w-[880px] grid-cols-[14ch,22ch,6ch,8ch,12ch,9ch,14ch,14ch]";
+  const colsLgLite   = "lg:grid-cols-[16ch,26ch,8ch,9ch,14ch,10ch,14ch,18ch]";
 
   return (
     <>
@@ -343,29 +370,21 @@ function TravauxTab() {
           </CardTitle>
 
           <div className="mt-3 grid grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs text-slate-500">Niveau prix par défaut</Label>
-              <select
-                className={`w-full rounded-lg border border-slate-200 ${px} ${py} ${t} bg-white`}
-                value={defaultLevel}
-                onChange={(e) => setDefaultLevel(e.target.value as Level)}
-              >
-                <option>Bas</option>
-                <option>Moyen</option>
-                <option>Haut</option>
-              </select>
-            </div>
-
-            <Num label="TVA (taux)" value={tva * 100} suffix="%" onChange={(v) => setTva((v || 0) / 100)} />
-
-            <div className="flex items-end gap-2">
+            <Num
+              label="TVA (taux)"
+              value={tva * 100}
+              suffix="%"
+              onChange={(v) => setTravaux({ ...travaux, tva: (v || 0) / 100 })}
+            />
+            <div />
+            <div className="flex items-end gap-2 justify-end">
               <button
-                onClick={() => setCompact((c) => !c)}
+                onClick={() => setTravaux({ ...travaux, showAdvanced: !showAdvanced })}
                 className="px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-sm"
                 data-html2canvas-ignore
-                title="Basculer le mode compact"
+                title="Afficher/masquer % total et Commentaires"
               >
-                {compact ? "Mode normal" : "Mode compact"}
+                {showAdvanced ? "Masquer colonnes avancées" : "Afficher colonnes avancées"}
               </button>
               <button
                 onClick={addRow}
@@ -374,6 +393,12 @@ function TravauxTab() {
               >
                 + Ajouter une ligne
               </button>
+
+              {/* Compteur */}
+              <div className="ml-2 text-xs text-slate-600 flex flex-col items-end">
+                <div>Lignes : <span className="font-semibold text-slate-800">{rows.length}</span></div>
+                <div>Total HT : <span className="font-semibold text-indigo-700">€ {fmt(totalHT)}</span></div>
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -381,9 +406,8 @@ function TravauxTab() {
         <CardContent>
           {/* Wrapper scroll horizontal */}
           <div className="overflow-x-auto">
-            {/* En-têtes A..J */}
-            <div className={`${colsBase} ${colsLg} ${t} font-semibold text-slate-600 ${px}`}>
-              {/* Catégorie sticky */}
+            {/* En-têtes A..J (alignés sur la même grille que les lignes) */}
+            <div className={`${showAdvanced ? `${colsBaseFull} ${colsLgFull}` : `${colsBaseLite} ${colsLgLite}`} ${t} font-semibold text-slate-600 ${px}`}>
               <div className="sticky left-0 bg-white z-10 pr-2">Catégorie (A)</div>
               <div>Sous-poste (B)</div>
               <div>Unité (C)</div>
@@ -391,9 +415,10 @@ function TravauxTab() {
               <div>Prix unitaire € (E)</div>
               <div>Coeff (F)</div>
               <div>Total HT € (G)</div>
-              <div>% total (H)</div>
-              <div>Niveau (I)</div>
-              <div>Commentaires (J)</div>
+              {!showAdvanced && <div>Niveau (I)</div>}
+              {showAdvanced && <div>% total (H)</div>}
+              {showAdvanced && <div>Niveau (I)</div>}
+              {showAdvanced && <div>Commentaires (J)</div>}
             </div>
 
             {/* Lignes */}
@@ -403,7 +428,7 @@ function TravauxTab() {
                 return (
                   <div
                     key={i}
-                    className={`${colsBase} ${colsLg} items-center gap-2 bg-white rounded-xl border border-slate-200 ${px} ${py}`}
+                    className={`${showAdvanced ? `${colsBaseFull} ${colsLgFull}` : `${colsBaseLite} ${colsLgLite}`} items-center gap-2 bg-white rounded-xl border border-slate-200 ${px} ${py}`}
                   >
                     {/* Catégorie (sticky) */}
                     <div className="sticky left-0 bg-white z-10 pr-2">
@@ -467,8 +492,10 @@ function TravauxTab() {
                     {/* Total HT */}
                     <div className={`${t} font-medium`}>€ {fmt(r.totalHT)}</div>
 
-                    {/* % du total */}
-                    <div className={`${t}`}>{(r.pct * 100 > 0 ? fmt(r.pct * 100) : "0")}%</div>
+                    {/* % du total (optionnel) */}
+                    {showAdvanced && (
+                      <div className={`${t}`}>{(r.pct * 100 > 0 ? fmt(r.pct * 100) : "0")}%</div>
+                    )}
 
                     {/* Niveau */}
                     <div>
@@ -477,28 +504,54 @@ function TravauxTab() {
                         value={r.niveau}
                         onChange={(e) => handleLevelChange(i, e.target.value as RowLevel)}
                       >
-                        {levelOptions.map((lv) => (
+                        {["Par défaut", "Bas", "Moyen", "Haut"].map((lv) => (
                           <option key={lv} value={lv}>{lv}</option>
                         ))}
                       </select>
                     </div>
 
-                    {/* Commentaires + supprimer */}
-                    <div className="flex items-center gap-2">
-                      <Input
-                        className={`bg-white/60 ${t}`}
-                        value={r.commentaires ?? ""}
-                        onChange={(e) => setCell(i, { commentaires: e.target.value })}
-                      />
-                      <button
-                        className={`text-xs px-2 ${py} rounded-md border border-slate-200 hover:bg-slate-50`}
-                        onClick={() => removeRow(i)}
-                        title="Supprimer la ligne"
-                        data-html2canvas-ignore
-                      >
-                        ✕
-                      </button>
-                    </div>
+                    {/* Commentaires + actions (optionnel) */}
+                    {showAdvanced && (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          className={`bg-white/60 ${t}`}
+                          value={r.commentaires ?? ""}
+                          onChange={(e) => setCell(i, { commentaires: e.target.value })}
+                        />
+                        <div className="flex gap-1">
+                          <button
+                            className={`text-xs px-2 ${py} rounded-md border border-slate-200 hover:bg-slate-50`}
+                            onClick={() => duplicateRow(i)}
+                            title="Dupliquer la ligne"
+                            data-html2canvas-ignore
+                          >
+                            📄
+                          </button>
+                          <button
+                            className={`text-xs px-2 ${py} rounded-md border border-slate-200 hover:bg-red-50 hover:border-red-300 text-red-600`}
+                            onClick={() => removeRow(i)}
+                            title="Supprimer la ligne"
+                            data-html2canvas-ignore
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* En mode lite, on met quand même une action supprimer minimaliste à la fin de la ligne */}
+                    {!showAdvanced && (
+                      <div className="flex items-center">
+                        <button
+                          className={`text-xs px-2 ${py} rounded-md border border-slate-200 hover:bg-red-50 hover:border-red-300 text-red-600`}
+                          onClick={() => removeRow(i)}
+                          title="Supprimer la ligne"
+                          data-html2canvas-ignore
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -519,57 +572,63 @@ function TravauxTab() {
             Exporter la synthèse en PDF
           </button>
         </CardHeader>
-        <CardContent ref={synthRef}>
-          <div className="overflow-x-auto">
-            <table className={`w-full ${compact ? "text-[11px]" : "text-sm"} border-separate border-spacing-y-1`}>
-              <thead>
-                <tr className="text-left text-slate-600">
-                  <th className="px-2 py-1">Catégorie</th>
-                  <th className="px-2 py-1">Total HT (€)</th>
-                  <th className="px-2 py-1">% du total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {CATS.map((c) => {
-                  const val = totalsByCat[c] || 0;
-                  const pct = totalHT > 0 ? val / totalHT : 0;
-                  return (
-                    <tr key={c} className="bg-white rounded-xl">
-                      <td className="px-2 py-1">{c}</td>
-                      <td className="px-2 py-1 font-medium">€ {fmt(val)}</td>
-                      <td className="px-2 py-1">{fmt(pct * 100)} %</td>
-                    </tr>
-                  );
-                })}
-                <tr className="bg-slate-50">
-                  <td className="px-2 py-1 font-semibold">TOTAL TRAVAUX HT</td>
-                  <td className="px-2 py-1 font-semibold">€ {fmt(totalHT)}</td>
-                  <td className="px-2 py-1" />
-                </tr>
-                <tr className="bg-slate-50">
-                  <td className="px-2 py-1 font-semibold">TVA</td>
-                  <td className="px-2 py-1 font-semibold">€ {fmt(ttva)}</td>
-                  <td className="px-2 py-1" />
-                </tr>
-                <tr className="bg-slate-100">
-                  <td className="px-2 py-1 font-semibold">TOTAL TTC</td>
-                  <td className="px-2 py-1 font-semibold">€ {fmt(ttc)}</td>
-                  <td className="px-2 py-1" />
-                </tr>
-              </tbody>
-            </table>
-          </div>
+        <CardContent>
+          {/* CIBLE PDF */}
+          <div id="travaux-synth" ref={synthRef}>
+            {/* Tableau synthèse par catégorie */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-separate border-spacing-y-1">
+                <thead>
+                  <tr className="text-left text-slate-600">
+                    <th className="px-2 py-1">Catégorie</th>
+                    <th className="px-2 py-1">Total HT (€)</th>
+                    <th className="px-2 py-1">% du total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {CATS.map((c) => {
+                    const val = totalsByCat[c] || 0;
+                    const pct = totalHT > 0 ? val / totalHT : 0;
+                    return (
+                      <tr key={c} className="bg-white rounded-xl">
+                        <td className="px-2 py-1">{c}</td>
+                        <td className="px-2 py-1 font-medium">€ {fmt(val)}</td>
+                        <td className="px-2 py-1">{fmt(pct * 100)} %</td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="bg-slate-50">
+                    <td className="px-2 py-1 font-semibold">TOTAL TRAVAUX HT</td>
+                    <td className="px-2 py-1 font-semibold">€ {fmt(totalHT)}</td>
+                    <td className="px-2 py-1" />
+                  </tr>
+                  <tr className="bg-slate-50">
+                    <td className="px-2 py-1 font-semibold">TVA</td>
+                    <td className="px-2 py-1 font-semibold">€ {fmt(ttva)}</td>
+                    <td className="px-2 py-1" />
+                  </tr>
+                  <tr className="bg-slate-100">
+                    <td className="px-2 py-1 font-semibold">TOTAL TTC</td>
+                    <td className="px-2 py-1 font-semibold">€ {fmt(ttc)}</td>
+                    <td className="px-2 py-1" />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-3">
-            <Kpi label="Niveau par défaut" value={defaultLevel} />
-            <Kpi label="TVA" value={`${fmt(tva * 100)} %`} />
-            <Kpi label="Total HT calculé" value={`€ ${fmt(totalHT)}`} />
+            {/* KPIs */}
+            <div className="mt-4 grid grid-cols-3 gap-3">
+              <Kpi label="TVA" value={`${fmt(tva * 100)} %`} />
+              <Kpi label="Total HT calculé" value={`€ ${fmt(totalHT)}`} />
+              <Kpi label="Total TTC" value={`€ ${fmt(ttc)}`} />
+            </div>
           </div>
         </CardContent>
       </Card>
     </>
   );
 }
+
 /* ------------ Onglet EURL ------------ */
 function CalculateurEURL({
   eurl,
@@ -747,25 +806,6 @@ function CalculateurSCCV({
 }
 
 /* -------------------- App -------------------- */
-const DEFAULT_TRAVAUX: TravauxState = {
-  rows: [{ qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }],
-  tva: 0.10,
-  showAdvanced: false,
-};
-
-const [travaux, setTravaux] = useState<TravauxState>(() => {
-  try {
-    const raw = localStorage.getItem("calc:travaux");
-    return raw ? { ...DEFAULT_TRAVAUX, ...JSON.parse(raw) } : DEFAULT_TRAVAUX;
-  } catch {
-    return DEFAULT_TRAVAUX;
-  }
-});
-
-useEffect(() => {
-  try { localStorage.setItem("calc:travaux", JSON.stringify(travaux)); } catch {}
-}, [travaux]);
-
 const DEFAULT_EURL: EURLState = {
   url: "",
   travaux: 360000,
@@ -788,27 +828,18 @@ const DEFAULT_SCCV: SCCVState = {
   fraisAgencePct: 5,
   regimeHoldingPct: 1.25,
 };
-type ChiffrageRow = {
-  categorie?: string;   // A
-  sousPoste?: string;   // B
-  unite?: string;       // C
-  qte: number;          // D
-  prixUnitaire: number; // E
-  coeffLocal: number;   // F
-  totalHT: number;      // G
-  pct: number;          // H
-  niveau: "Par défaut" | "Bas" | "Moyen" | "Haut"; // I
-  commentaires?: string;// J
-};
 
-type TravauxState = {
-  rows: ChiffrageRow[];
-  tva: number;           // ex: 0.10
-  showAdvanced: boolean; // afficher H & J ?
+const DEFAULT_TRAVAUX: TravauxState = {
+  // 1 seule ligne par défaut
+  rows: [{ qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }],
+  tva: DEFAULT_TVA,
+  showAdvanced: false,
 };
 
 export default function App() {
-  const [tab, setTab] = useState<TabKey>("sccv");
+  const [tab, setTab] = useState<TabKey>(() => {
+    try { return (localStorage.getItem("calc:tab") as TabKey) || "sccv"; } catch { return "sccv"; }
+  });
   const [exporting, setExporting] = useState(false);
 
   const [eurl, setEurl] = useState<EURLState>(() => {
@@ -819,9 +850,15 @@ export default function App() {
     try { const raw = localStorage.getItem("calc:sccv"); return raw ? { ...DEFAULT_SCCV, ...JSON.parse(raw) } : DEFAULT_SCCV; }
     catch { return DEFAULT_SCCV; }
   });
+  const [travaux, setTravaux] = useState<TravauxState>(() => {
+    try { const raw = localStorage.getItem("calc:travaux"); return raw ? { ...DEFAULT_TRAVAUX, ...JSON.parse(raw) } : DEFAULT_TRAVAUX; }
+    catch { return DEFAULT_TRAVAUX; }
+  });
 
   useEffect(() => { try { localStorage.setItem("calc:eurl", JSON.stringify(eurl)); } catch {} }, [eurl]);
   useEffect(() => { try { localStorage.setItem("calc:sccv", JSON.stringify(sccv)); } catch {} }, [sccv]);
+  useEffect(() => { try { localStorage.setItem("calc:travaux", JSON.stringify(travaux)); } catch {} }, [travaux]);
+  useEffect(() => { try { localStorage.setItem("calc:tab", tab); } catch {} }, [tab]);
 
   const sccvTravaux = useMemo(() => sccv.prixRenovM2 * sccv.surfaceM2, [sccv.prixRenovM2, sccv.surfaceM2]);
   useEffect(() => {
@@ -831,7 +868,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sccvTravaux, eurl.manualTravaux]);
 
-  // ----- EXPORT PDF global (SCCV/EURL) (inchangé) -----
+  // ----- EXPORT PDF global (SCCV/EURL) -----
   const printableRef = useRef<HTMLDivElement>(null);
   const exportPDF = async () => {
     setExporting(true);
@@ -868,8 +905,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen p-6 md:p-8 bg-gradient-to-b from-slate-50 to-zinc-100 text-slate-900">
-      <div className="max-w-2xl mx-auto">
-
+      <div className="max-w-5xl mx-auto">
         {/* Barre d'action (non incluse dans le PDF) */}
         <div className="flex items-center justify-between mb-4" data-html2canvas-ignore>
           <div>
@@ -890,7 +926,7 @@ export default function App() {
         {/* Tabs écran */}
         <Tabs active={tab} onChange={setTab} />
 
-        {/* ===== Zone visible écran OU dossier PDF ===== */}
+        {/* Zone visible écran OU dossier PDF */}
         <div ref={printableRef} className={exporting ? "pdf-mode" : ""}>
           {exporting && <style>{pdfStyles}</style>}
 
@@ -901,7 +937,7 @@ export default function App() {
               ) : tab === "eurl" ? (
                 <CalculateurEURL eurl={eurl} setEurl={setEurl} sccvTravaux={sccvTravaux} />
               ) : (
-                <TravauxTab />
+                <TravauxTab travaux={travaux} setTravaux={setTravaux} />
               )}
               <footer className="mt-6 text-[11px] text-slate-500">
                 Accent principal: <span className="text-indigo-600 font-medium">indigo</span>. Fond: slate/zinc.
@@ -909,7 +945,7 @@ export default function App() {
             </>
           )}
 
-          {/* Export PDF global (inchangé) */}
+          {/* Export PDF global */}
           {exporting && (
             <>
               <h1>Dossier SCCV / EURL – Synthèse</h1>
