@@ -794,89 +794,86 @@ export default function App() {
     await (html2pdf() as any).set(opt).from(wrap).save();
   };
 
-  // EXPORT EXCEL (formules + 1 onglet / section)
-  const runExcelExport = () => {
-    const wb = XLSX.utils.book_new();
+const runExcelExport = async () => {
+  const XLSX = await import("xlsx"); // lazy-load
 
-    // SCCV sheet
-    {
-      const rows = [
-        ["Paramètre", "Valeur", "Unité"],
-        ["Prix d'achat (Bien)", sccv.bien, "€"],
-        ["Prix rénovation (€/m²)", sccv.prixRenovM2, "€"],
-        ["Surface", sccv.surfaceM2, "m²"],
-        ["Prix revente (€/m²)", sccv.prixReventeM2, "€"],
-        ["Apport (%)", sccv.apportPct, "%"],
-        ["Charge crédit (%)", sccv.chargeCreditPct, "%"],
-        ["Frais dossier (%)", sccv.fraisDossierPct, "%"],
-        ["Frais agence (%)", sccv.fraisAgencePct, "%"],
-        ["Régime holding (%)", sccv.regimeHoldingPct, "%"],
-        [],
-        ["Travaux (€) = PrixRenov/m² * Surface", { f: "B3*B4" }],
-        ["Base (€) = Bien + Travaux", { f: "B2+B12" }],
-        ["Apport (€) = % * Base", { f: "B6/100*B13" }],
-        ["Charge crédit (€) = (Base-Apport)*%", { f: "(B13-B14)*B7/100" }],
-        ["Frais dossier (€) = (Base-Apport)*%", { f: "(B13-B14)*B8/100" }],
-        ["Frais agence (€) = Base*%", { f: "B13*B9/100" }],
-        ["Coût projet (€) = Bien + Travaux + Agence + Dossier + Crédit", { f: "B2+B12+B16+B15+B14" }],
-        ["Total après apport (€) = Coût - Apport", { f: "B17-B14" }],
-        ["Prix revente (€) = Surface*PrixRev/m²", { f: "B4*B5" }],
-        ["Marge brute (€) = Revente - Coût + Apport", { f: "B19-B17+B14" }],
-      ];
-      const ws = XLSX.utils.aoa_to_sheet(rows as any);
-      XLSX.utils.book_append_sheet(wb, ws, "SCCV");
+  const wb = XLSX.utils.book_new();
+
+  // --- SCCV ---
+  {
+    const rows = [
+      ["Paramètre", "Valeur", "Unité"],
+      ["Prix d'achat (Bien)", sccv.bien, "€"],
+      ["Prix rénovation (€/m²)", sccv.prixRenovM2, "€"],
+      ["Surface", sccv.surfaceM2, "m²"],
+      ["Prix revente (€/m²)", sccv.prixReventeM2, "€"],
+      ["Apport (%)", sccv.apportPct, "%"],
+      ["Charge crédit (%)", sccv.chargeCreditPct, "%"],
+      ["Frais dossier (%)", sccv.fraisDossierPct, "%"],
+      ["Frais agence (%)", sccv.fraisAgencePct, "%"],
+      ["Régime holding (%)", sccv.regimeHoldingPct, "%"],
+      [],
+      ["Travaux (€) = PrixRenov/m² * Surface", { f: "B3*B4" }],
+      ["Base (€) = Bien + Travaux", { f: "B2+B12" }],
+      ["Apport (€) = % * Base", { f: "B6/100*B13" }],
+      ["Charge crédit (€) = (Base-Apport)*%", { f: "(B13-B14)*B7/100" }],
+      ["Frais dossier (€) = (Base-Apport)*%", { f: "(B13-B14)*B8/100" }],
+      ["Frais agence (€) = Base*%", { f: "B13*B9/100" }],
+      ["Coût projet (€) = Bien + Travaux + Agence + Dossier + Crédit", { f: "B2+B12+B16+B15+B14" }],
+      ["Total après apport (€) = Coût - Apport", { f: "B17-B14" }],
+      ["Prix revente (€) = Surface*PrixRev/m²", { f: "B4*B5" }],
+      ["Marge brute (€) = Revente - Coût + Apport", { f: "B19-B17+B14" }],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows as any);
+    XLSX.utils.book_append_sheet(wb, ws, "SCCV");
+  }
+
+  // --- EURL ---
+  {
+    const rows = [
+      ["Paramètre", "Valeur", "Unité"],
+      ["CA (Travaux) €", eurl.travaux, "€"],
+      ["% Matériaux", eurl.matPct, "%"],
+      ["% Main d'œuvre", eurl.moPct, "%"],
+      ["% Autres frais", eurl.caAutresPct, "%"],
+      ["Taux IS (%)", eurl.tauxIS, "%"],
+      [],
+      ["Coût matériaux (€)", { f: "B2*B3/100" }],
+      ["Coût MO (€)", { f: "B2*B4/100" }],
+      ["Autres coûts (€)", { f: "B2*B5/100" }],
+      ["Bénéfice brut (€)", { f: "B2-(B8+B9+B10)" }],
+      ["Impôts IS (€)", { f: "MAX(B11,0)*B6/100" }],
+      ["Bénéfice net (€)", { f: "B11-B12" }],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows as any);
+    XLSX.utils.book_append_sheet(wb, ws, "EURL");
+  }
+
+  // --- TRAVAUX ---
+  {
+    const header = ["Catégorie","Sous-poste","Unité","Qté","Prix unitaire (€)","Coeff","Total (€)","Commentaires"];
+    const body = travaux.rows.map((r) => [
+      r.categorie ?? "",
+      r.sousPoste ?? "",
+      r.unite ?? "",
+      r.qte || 0,
+      r.prixUnitaire || 0,
+      r.coeffLocal || 1,
+      null, // formule G
+      r.commentaires ?? "",
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([header, ...body] as any);
+    for (let i = 0; i < body.length; i++) {
+      const rowIndex = 2 + i;
+      const cell = XLSX.utils.encode_cell({ r: i + 1, c: 6 }); // col G
+      (ws as any)[cell] = { t: "n", f: `D${rowIndex}*E${rowIndex}*F${rowIndex}` };
     }
+    XLSX.utils.book_append_sheet(wb, ws, "TRAVAUX");
+  }
 
-    // EURL sheet
-    {
-      const rows = [
-        ["Paramètre", "Valeur", "Unité"],
-        ["CA (Travaux) €", eurl.travaux, "€"],
-        ["% Matériaux", eurl.matPct, "%"],
-        ["% Main d'œuvre", eurl.moPct, "%"],
-        ["% Autres frais", eurl.caAutresPct, "%"],
-        ["Taux IS (%)", eurl.tauxIS, "%"],
-        [],
-        ["Coût matériaux (€)", { f: "B2*B3/100" }],
-        ["Coût MO (€)", { f: "B2*B4/100" }],
-        ["Autres coûts (€)", { f: "B2*B5/100" }],
-        ["Bénéfice brut (€)", { f: "B2-(B8+B9+B10)" }],
-        ["Impôts IS (€)", { f: "MAX(B11,0)*B6/100" }],
-        ["Bénéfice net (€)", { f: "B11-B12" }],
-      ];
-      const ws = XLSX.utils.aoa_to_sheet(rows as any);
-      XLSX.utils.book_append_sheet(wb, ws, "EURL");
-    }
+  XLSX.writeFile(wb, "Export_Calculette_Immo.xlsx");
+};
 
-    // TRAVAUX sheet (toutes colonnes + formules)
-    {
-      const header = ["Catégorie","Sous-poste","Unité","Qté","Prix unitaire (€)","Coeff","Total (€)","Commentaires"];
-      const body = travaux.rows.map((r) => [
-        r.categorie ?? "",
-        r.sousPoste ?? "",
-        r.unite ?? "",
-        r.qte || 0,
-        r.prixUnitaire || 0,
-        r.coeffLocal || 1,
-        null, // formule après
-        r.commentaires ?? "",
-      ]);
-      const ws = XLSX.utils.aoa_to_sheet([header, ...body] as any);
-      // Formule Total = D * E * F (par ligne)
-      for (let i = 0; i < body.length; i++) {
-        const rowIndex = 2 + i; // 1-based + header
-        const cell = XLSX.utils.encode_cell({ r: i + 1, c: 6 }); // colonne G (index 6)
-        (ws as any)[cell] = { t: "n", f: `D${rowIndex}*E${rowIndex}*F${rowIndex}` };
-      }
-      // Total général (à la fin)
-      const totalRow = body.length + 2;
-      const totalCell = XLSX.utils.encode_cell({ r: totalRow - 1, c: 6 });
-      (ws as any)[totalCell] = { t: "n", f: `SUM(G2:G${totalRow - 1})` };
-      XLSX.utils.book_append_sheet(wb, ws, "TRAVAUX");
-    }
-
-    XLSX.writeFile(wb, "Export_Calculette_Immo.xlsx");
-  };
 
   const runExport = async () => {
     setShowExport(false);
