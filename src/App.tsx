@@ -4,7 +4,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import html2pdf from "html2pdf.js";
 
-type TabKey = "sccv" | "eurl";
+/* -------------------------------------------------------
+   NOUVEL ONGLET : TRAVAUX (catalogue + chiffrage + synthèse)
+   - Colonnes A..J comme l’Excel "Chiffrage"
+   - Automatisme: Sous-poste dépend de Catégorie
+   - Unité & Prix unitaire auto (Bas/Moyen/Haut + "Par défaut")
+   - Total HT, % du total, Synthèse par catégorie + TVA/TTC
+   - Bouton: Exporter la SYNTHÈSE uniquement en PDF
+-------------------------------------------------------- */
+
+type TabKey = "sccv" | "eurl" | "travaux";
+
+type Level = "Bas" | "Moyen" | "Haut";
+type RowLevel = "Par défaut" | Level;
 
 type EURLState = {
   url?: string;
@@ -34,7 +46,6 @@ const fmt = (n: number) =>
     Number.isFinite(n) ? n : 0
   );
 
-/* ---------------- UI helpers ---------------- */
 function Num({
   label,
   value,
@@ -116,11 +127,13 @@ function Tabs({
         ? "bg-indigo-600 text-white border-indigo-600 shadow"
         : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
     }`;
+  const items: TabKey[] = ["sccv", "eurl", "travaux"];
+  const labels: Record<TabKey, string> = { sccv: "SCCV", eurl: "EURL", travaux: "TRAVAUX" };
   return (
     <div className="flex gap-2 mb-5" data-html2canvas-ignore>
-      {(["sccv", "eurl"] as const).map((k) => (
+      {items.map((k) => (
         <button key={k} onClick={() => onChange(k)} className={btn(active === k)}>
-          {k.toUpperCase()}
+          {labels[k]}
         </button>
       ))}
     </div>
@@ -132,6 +145,437 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
     <div className="mb-3">
       <h2 className="text-xl font-semibold text-slate-900">{children}</h2>
     </div>
+  );
+}
+
+/* ------------ CATALOGUE (enrichi) ------------ */
+type CatalogueItem = {
+  categorie: string;
+  sousPoste: string;
+  unite: string;
+  prix: { bas: number; moyen: number; haut: number };
+  note?: string;
+};
+
+const CATS = [
+  "GROS ŒUVRE",
+  "SECOND ŒUVRE",
+  "FINITIONS",
+  "MENUISERIES",
+  "TOITURE",
+  "EXTÉRIEUR",
+  "DIVERS",
+] as const;
+
+const CATALOGUE: CatalogueItem[] = [
+  // GROS ŒUVRE
+  { categorie: "GROS ŒUVRE", sousPoste: "Démolition cloison simple", unite: "m²", prix: { bas: 10, moyen: 15, haut: 25 } },
+  { categorie: "GROS ŒUVRE", sousPoste: "Dépose revêtements sol", unite: "m²", prix: { bas: 5, moyen: 8, haut: 12 } },
+  { categorie: "GROS ŒUVRE", sousPoste: "Ouverture mur porteur + IPN", unite: "U", prix: { bas: 1500, moyen: 1800, haut: 2400 } },
+  { categorie: "GROS ŒUVRE", sousPoste: "Maçonnerie parpaings 20", unite: "m²", prix: { bas: 90, moyen: 120, haut: 150 } },
+  { categorie: "GROS ŒUVRE", sousPoste: "Dalle béton armée 10 cm", unite: "m²", prix: { bas: 90, moyen: 100, haut: 130 } },
+  { categorie: "GROS ŒUVRE", sousPoste: "Reprise fondations ponctuelles", unite: "ml", prix: { bas: 150, moyen: 220, haut: 300 } },
+  { categorie: "GROS ŒUVRE", sousPoste: "Seuil/linteau béton coulé", unite: "U", prix: { bas: 60, moyen: 80, haut: 100 } },
+  // SECOND ŒUVRE
+  { categorie: "SECOND ŒUVRE", sousPoste: "Isolation murs 120 mm", unite: "m²", prix: { bas: 40, moyen: 45, haut: 55 } },
+  { categorie: "SECOND ŒUVRE", sousPoste: "Cloison / doublage BA13", unite: "m²", prix: { bas: 55, moyen: 60, haut: 70 } },
+  { categorie: "SECOND ŒUVRE", sousPoste: "Plafond BA13 suspendu", unite: "m²", prix: { bas: 45, moyen: 55, haut: 65 } },
+  { categorie: "SECOND ŒUVRE", sousPoste: "Électricité complète", unite: "m²", prix: { bas: 70, moyen: 80, haut: 90 } },
+  { categorie: "SECOND ŒUVRE", sousPoste: "Remplacement tableau électrique", unite: "U", prix: { bas: 400, moyen: 500, haut: 700 } },
+  { categorie: "SECOND ŒUVRE", sousPoste: "Réseau RJ45 (prise double)", unite: "U", prix: { bas: 60, moyen: 80, haut: 120 } },
+  { categorie: "SECOND ŒUVRE", sousPoste: "Plomberie - création SDE", unite: "U", prix: { bas: 3000, moyen: 4500, haut: 6000 } },
+  { categorie: "SECOND ŒUVRE", sousPoste: "Chauffe-eau thermodynamique", unite: "U", prix: { bas: 1600, moyen: 1900, haut: 2400 } },
+  // FINITIONS
+  { categorie: "FINITIONS", sousPoste: "Peinture murs & plafonds", unite: "m²", prix: { bas: 14, moyen: 18, haut: 25 } },
+  { categorie: "FINITIONS", sousPoste: "Sols carrelage 60x60", unite: "m²", prix: { bas: 40, moyen: 45, haut: 60 } },
+  { categorie: "FINITIONS", sousPoste: "Sols parquet flottant", unite: "m²", prix: { bas: 30, moyen: 35, haut: 45 } },
+  { categorie: "FINITIONS", sousPoste: "Sols vinyle", unite: "m²", prix: { bas: 25, moyen: 30, haut: 40 } },
+  { categorie: "FINITIONS", sousPoste: "Faïence murale SDB", unite: "m²", prix: { bas: 40, moyen: 50, haut: 65 } },
+  { categorie: "FINITIONS", sousPoste: "Cuisine équipée (pose incluse)", unite: "U", prix: { bas: 3000, moyen: 4500, haut: 6000 } },
+  { categorie: "FINITIONS", sousPoste: "Escalier bois/acier", unite: "U", prix: { bas: 3000, moyen: 4500, haut: 6000 } },
+  // MENUISERIES
+  { categorie: "MENUISERIES", sousPoste: "Fenêtre PVC DV 120x135", unite: "U", prix: { bas: 350, moyen: 400, haut: 500 } },
+  { categorie: "MENUISERIES", sousPoste: "Porte intérieure alvéolaire", unite: "U", prix: { bas: 100, moyen: 120, haut: 150 } },
+  { categorie: "MENUISERIES", sousPoste: "Porte d’entrée acier isolée", unite: "U", prix: { bas: 1000, moyen: 1200, haut: 1400 } },
+  { categorie: "MENUISERIES", sousPoste: "Baie vitrée alu coulissante 2V", unite: "U", prix: { bas: 1500, moyen: 1800, haut: 2200 } },
+  // TOITURE
+  { categorie: "TOITURE", sousPoste: "Réfection couverture tuiles", unite: "m²", prix: { bas: 90, moyen: 110, haut: 130 } },
+  { categorie: "TOITURE", sousPoste: "Charpente partielle", unite: "m²", prix: { bas: 110, moyen: 140, haut: 180 } },
+  { categorie: "TOITURE", sousPoste: "Isolation combles soufflée 300mm", unite: "m²", prix: { bas: 30, moyen: 35, haut: 45 } },
+  { categorie: "TOITURE", sousPoste: "Fenêtre de toit (Velux)", unite: "U", prix: { bas: 700, moyen: 850, haut: 1100 } },
+  // EXTÉRIEUR
+  { categorie: "EXTÉRIEUR", sousPoste: "Façade enduit gratté fin", unite: "m²", prix: { bas: 55, moyen: 60, haut: 70 } },
+  { categorie: "EXTÉRIEUR", sousPoste: "Isolation thermique par l’extérieur", unite: "m²", prix: { bas: 140, moyen: 160, haut: 190 } },
+  { categorie: "EXTÉRIEUR", sousPoste: "VRD / terrassement", unite: "m³", prix: { bas: 35, moyen: 40, haut: 50 } },
+  { categorie: "EXTÉRIEUR", sousPoste: "Allée béton désactivé", unite: "m²", prix: { bas: 60, moyen: 80, haut: 100 } },
+  { categorie: "EXTÉRIEUR", sousPoste: "Clôture rigide 1,50 m", unite: "ml", prix: { bas: 60, moyen: 75, haut: 100 } },
+  { categorie: "EXTÉRIEUR", sousPoste: "Portail motorisé alu 3 m", unite: "U", prix: { bas: 2000, moyen: 2500, haut: 3200 } },
+  // DIVERS
+  { categorie: "DIVERS", sousPoste: "Étude structure (IPN, etc.)", unite: "U", prix: { bas: 700, moyen: 900, haut: 1200 } },
+  { categorie: "DIVERS", sousPoste: "Étude thermique / DPE projet", unite: "U", prix: { bas: 300, moyen: 500, haut: 700 } },
+  { categorie: "DIVERS", sousPoste: "Bennes / évacuation déchets", unite: "m³", prix: { bas: 30, moyen: 40, haut: 60 } },
+];
+
+const SOUS_POSTES_BY_CAT: Record<string, CatalogueItem[]> = CATALOGUE.reduce((acc, it) => {
+  (acc[it.categorie] ||= []).push(it);
+  return acc;
+}, {} as Record<string, CatalogueItem[]>);
+
+/* ------------ Onglet TRAVAUX (Chiffrage + Synthèse) ------------ */
+type ChiffrageRow = {
+  categorie?: string;      // A
+  sousPoste?: string;      // B
+  unite?: string;          // C (auto)
+  qte: number;             // D
+  prixUnitaire: number;    // E (auto selon niveau)
+  coeffLocal: number;      // F (x1 par défaut)
+  totalHT: number;         // G (auto)
+  pct: number;             // H (auto)
+  niveau: RowLevel;        // I ("Par défaut" | Bas | Moyen | Haut)
+  commentaires?: string;   // J
+};
+
+const DEFAULT_LEVEL: Level = "Moyen";
+const DEFAULT_TVA = 0.10;
+const START_ROWS = 12;
+
+function TravauxTab() {
+  const [defaultLevel, setDefaultLevel] = useState<Level>(DEFAULT_LEVEL);
+  const [tva, setTva] = useState<number>(DEFAULT_TVA); // 0.10 = 10%
+  const [rows, setRows] = useState<ChiffrageRow[]>(
+    Array.from({ length: START_ROWS }, () => ({
+      qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut",
+    }))
+  );
+
+  const totalHT = useMemo(
+    () => rows.reduce((s, r) => s + (Number.isFinite(r.totalHT) ? r.totalHT : 0), 0),
+    [rows]
+  );
+
+  const totalsByCat = useMemo(() => {
+    const map: Record<string, number> = {};
+    rows.forEach((r) => {
+      if (!r.categorie) return;
+      map[r.categorie] = (map[r.categorie] || 0) + (Number.isFinite(r.totalHT) ? r.totalHT : 0);
+    });
+    return map;
+  }, [rows]);
+
+  const ttva = useMemo(() => totalHT * tva, [totalHT, tva]);
+  const ttc  = useMemo(() => totalHT + ttva, [totalHT, ttva]);
+
+  // recalcul d’une ligne (unité + prix selon niveau + total + %)
+  const recalcRow = (idx: number, base?: Partial<ChiffrageRow>) => {
+    setRows((prev) => {
+      const r = { ...prev[idx], ...base };
+
+      // Si catégorie/sous-poste changent → unité + prix tiers
+      let item: CatalogueItem | undefined;
+      if (r.categorie && r.sousPoste) {
+        item = SOUS_POSTES_BY_CAT[r.categorie]?.find((x) => x.sousPoste === r.sousPoste);
+        if (item) {
+          r.unite = item.unite;
+          const level: Level =
+            r.niveau === "Par défaut" ? defaultLevel : (r.niveau as Level);
+          const p =
+            level === "Bas" ? item.prix.bas :
+            level === "Haut" ? item.prix.haut : item.prix.moyen;
+          r.prixUnitaire = p;
+        }
+      }
+
+      // Total HT = qte * prix * coeffLocal
+      const q = Number(r.qte) || 0;
+      const pu = Number(r.prixUnitaire) || 0;
+      const k = Number(r.coeffLocal) || 1;
+      r.totalHT = q * pu * k;
+
+      // % du total: (on calcule plus tard après avoir la somme globale)
+      const copy = [...prev];
+      copy[idx] = r;
+      const sum = copy.reduce((s, x) => s + (Number.isFinite(x.totalHT) ? x.totalHT : 0), 0);
+      copy.forEach((x) => (x.pct = sum > 0 ? x.totalHT / sum : 0));
+
+      return copy;
+    });
+  };
+
+  const setCell = (idx: number, patch: Partial<ChiffrageRow>) => recalcRow(idx, patch);
+
+  const handleCatChange = (idx: number, cat?: string) => {
+    const firstSous = cat ? SOUS_POSTES_BY_CAT[cat]?.[0]?.sousPoste : undefined;
+    recalcRow(idx, {
+      categorie: cat,
+      sousPoste: firstSous,
+      unite: undefined,
+      prixUnitaire: 0,
+    });
+  };
+
+  const handleSousChange = (idx: number, sous?: string) => {
+    recalcRow(idx, { sousPoste: sous });
+  };
+
+  const handleLevelChange = (idx: number, lvl: RowLevel) => {
+    recalcRow(idx, { niveau: lvl });
+  };
+
+  const addRow = () => {
+    setRows((prev) => [...prev, { qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }]);
+  };
+
+  const removeRow = (i: number) => {
+    setRows((prev) => prev.filter((_, idx) => idx !== i));
+  };
+
+  // Export PDF : Synthèse seulement
+  const synthRef = useRef<HTMLDivElement>(null);
+  const exportSynthPDF = async () => {
+    if (!synthRef.current) return;
+    const opt = {
+      margin: 12,
+      filename: `Synthese_Travaux_${new Date().toISOString().slice(0,10)}.pdf`,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2.2, useCORS: true, backgroundColor: "#ffffff" },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" as const },
+    };
+    await (html2pdf() as any).set(opt).from(synthRef.current).save();
+  };
+
+  // UI helpers
+  const levelOptions: RowLevel[] = ["Par défaut", "Bas", "Moyen", "Haut"];
+
+  return (
+    <>
+      <Card className="mb-6 shadow-sm border-slate-200 bg-white/90 backdrop-blur">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg font-semibold text-slate-900">
+            TRAVAUX – Chiffrage (comme l’onglet Excel)
+          </CardTitle>
+          <div className="mt-3 grid grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs text-slate-500">Niveau prix par défaut</Label>
+              <select
+                className="w-full rounded-lg border border-slate-200 px-2 py-2 text-sm bg-white"
+                value={defaultLevel}
+                onChange={(e) => setDefaultLevel(e.target.value as Level)}
+              >
+                <option>Bas</option>
+                <option>Moyen</option>
+                <option>Haut</option>
+              </select>
+            </div>
+            <Num label="TVA (taux)" value={tva * 100} suffix="%" onChange={(v) => setTva((v || 0) / 100)} />
+            <div className="flex items-end">
+              <button
+                onClick={addRow}
+                className="px-3 py-2 rounded-lg bg-slate-800 text-white text-sm hover:bg-slate-900"
+                data-html2canvas-ignore
+              >
+                + Ajouter une ligne
+              </button>
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          {/* En-têtes A..J */}
+          <div className="grid grid-cols-[16ch,26ch,8ch,9ch,14ch,10ch,14ch,12ch,18ch,1fr] text-[12px] font-semibold text-slate-600 px-2">
+            <div>Catégorie (A)</div>
+            <div>Sous-poste (B)</div>
+            <div>Unité (C)</div>
+            <div>Qté (D)</div>
+            <div>Prix unitaire € (E)</div>
+            <div>Coeff (F)</div>
+            <div>Total HT € (G)</div>
+            <div>% total (H)</div>
+            <div>Niveau (I)</div>
+            <div>Commentaires (J)</div>
+          </div>
+
+          <div className="mt-2 space-y-2">
+            {rows.map((r, i) => {
+              const sousList = r.categorie ? SOUS_POSTES_BY_CAT[r.categorie] ?? [] : [];
+              return (
+                <div
+                  key={i}
+                  className="grid grid-cols-[16ch,26ch,8ch,9ch,14ch,10ch,14ch,12ch,18ch,1fr] items-center gap-2 bg-white rounded-xl border border-slate-200 px-2 py-2"
+                >
+                  {/* Catégorie */}
+                  <div>
+                    <select
+                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm bg-white"
+                      value={r.categorie || ""}
+                      onChange={(e) => handleCatChange(i, e.target.value || undefined)}
+                    >
+                      <option value="">—</option>
+                      {CATS.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Sous-poste (dépend de Catégorie) */}
+                  <div>
+                    <select
+                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm bg-white"
+                      value={r.sousPoste || ""}
+                      onChange={(e) => handleSousChange(i, e.target.value || undefined)}
+                      disabled={!r.categorie}
+                    >
+                      <option value="">{r.categorie ? "—" : "Choisir catégorie"}</option>
+                      {sousList.map((sp) => (
+                        <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Unité (auto) */}
+                  <div>
+                    <Input
+                      className="bg-white/60 text-sm"
+                      value={r.unite ?? ""}
+                      readOnly
+                    />
+                  </div>
+
+                  {/* Qté */}
+                  <div>
+                    <Input
+                      inputMode="decimal"
+                      className="bg-white/60 text-sm"
+                      value={Number.isFinite(r.qte) ? r.qte : 0}
+                      onChange={(e) => setCell(i, { qte: parseFloat(e.target.value.replace(",", ".")) || 0 })}
+                    />
+                  </div>
+
+                  {/* Prix unitaire (auto par niveau) */}
+                  <div>
+                    <Input
+                      className="bg-white/60 text-sm"
+                      value={Number.isFinite(r.prixUnitaire) ? r.prixUnitaire : 0}
+                      readOnly
+                    />
+                  </div>
+
+                  {/* Coeff local */}
+                  <div>
+                    <Input
+                      inputMode="decimal"
+                      className="bg-white/60 text-sm"
+                      value={Number.isFinite(r.coeffLocal) ? r.coeffLocal : 1}
+                      onChange={(e) => setCell(i, { coeffLocal: parseFloat(e.target.value.replace(",", ".")) || 0 })}
+                    />
+                  </div>
+
+                  {/* Total HT (auto) */}
+                  <div className="text-sm font-medium">
+                    € {fmt(r.totalHT)}
+                  </div>
+
+                  {/* % du total (auto) */}
+                  <div className="text-sm">{(r.pct * 100 > 0 ? fmt(r.pct * 100) : "0")}%</div>
+
+                  {/* Niveau (Par défaut/Bas/Moyen/Haut) */}
+                  <div>
+                    <select
+                      className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm bg-white"
+                      value={r.niveau}
+                      onChange={(e) => handleLevelChange(i, e.target.value as RowLevel)}
+                    >
+                      {["Par défaut", "Bas", "Moyen", "Haut"].map((lv) => (
+                        <option key={lv} value={lv}>{lv}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Commentaires */}
+                  <div className="flex items-center gap-2">
+                    <Input
+                      className="bg-white/60 text-sm"
+                      value={r.commentaires ?? ""}
+                      onChange={(e) => setCell(i, { commentaires: e.target.value })}
+                    />
+                    <button
+                      className="text-xs px-2 py-1 rounded-md border border-slate-200 hover:bg-slate-50"
+                      onClick={() => removeRow(i)}
+                      title="Supprimer la ligne"
+                      data-html2canvas-ignore
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* SYNTHÈSE (Excel "Synthese") */}
+      <Card className="shadow-sm border-slate-200 bg-white/90 backdrop-blur">
+        <CardHeader className="pb-2 flex items-center justify-between">
+          <CardTitle className="text-lg font-semibold text-slate-900">Synthèse</CardTitle>
+          <button
+            onClick={exportSynthPDF}
+            className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm shadow hover:bg-indigo-700"
+            data-html2canvas-ignore
+          >
+            Exporter la synthèse en PDF
+          </button>
+        </CardHeader>
+        <CardContent ref={synthRef}>
+          {/* Tableau synthèse par catégorie */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-separate border-spacing-y-1">
+              <thead>
+                <tr className="text-left text-slate-600">
+                  <th className="px-2 py-1">Catégorie</th>
+                  <th className="px-2 py-1">Total HT (€)</th>
+                  <th className="px-2 py-1">% du total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {CATS.map((c) => {
+                  const val = totalsByCat[c] || 0;
+                  const pct = totalHT > 0 ? val / totalHT : 0;
+                  return (
+                    <tr key={c} className="bg-white rounded-xl">
+                      <td className="px-2 py-1">{c}</td>
+                      <td className="px-2 py-1 font-medium">€ {fmt(val)}</td>
+                      <td className="px-2 py-1">{fmt(pct * 100)} %</td>
+                    </tr>
+                  );
+                })}
+                <tr className="bg-slate-50">
+                  <td className="px-2 py-1 font-semibold">TOTAL TRAVAUX HT</td>
+                  <td className="px-2 py-1 font-semibold">€ {fmt(totalHT)}</td>
+                  <td className="px-2 py-1" />
+                </tr>
+                <tr className="bg-slate-50">
+                  <td className="px-2 py-1 font-semibold">TVA</td>
+                  <td className="px-2 py-1 font-semibold">€ {fmt(ttva)}</td>
+                  <td className="px-2 py-1" />
+                </tr>
+                <tr className="bg-slate-100">
+                  <td className="px-2 py-1 font-semibold">TOTAL TTC</td>
+                  <td className="px-2 py-1 font-semibold">€ {fmt(ttc)}</td>
+                  <td className="px-2 py-1" />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Réglages récap synthèse */}
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <Kpi label="Niveau par défaut" value={defaultLevel} />
+            <Kpi label="TVA" value={`${fmt(tva * 100)} %`} />
+            <Kpi label="Total HT calculé" value={`€ ${fmt(totalHT)}`} />
+          </div>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
@@ -359,13 +803,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sccvTravaux, eurl.manualTravaux]);
 
-  // ----- EXPORT PDF -----
+  // ----- EXPORT PDF global (SCCV/EURL) (inchangé) -----
   const printableRef = useRef<HTMLDivElement>(null);
-
   const exportPDF = async () => {
-    setExporting(true); // on rend visible la version "toutes sections"
-    await new Promise((r) => requestAnimationFrame(() => r(null))); // attendre le rendu
-
+    setExporting(true);
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
     if (!printableRef.current) { setExporting(false); return; }
 
     const now = new Date();
@@ -385,7 +827,6 @@ export default function App() {
     setExporting(false);
   };
 
-  /* Styles dédiés au mode PDF (lisibilité) */
   const pdfStyles = `
   .pdf-mode{ background:#fff; padding:16px; line-height:1.4; }
   .pdf-mode h1{ font-size:20px; margin:0 0 8px; }
@@ -405,14 +846,14 @@ export default function App() {
         <div className="flex items-center justify-between mb-4" data-html2canvas-ignore>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Calculateur Rentabilité – SCCV / EURL
+              Calculateur Rentabilité – SCCV / EURL / TRAVAUX
             </h1>
-            <p className="text-sm text-slate-600">Version de prévisualisation (couleurs et champ URL)</p>
+            <p className="text-sm text-slate-600">Version avec onglet TRAVAUX (chiffrage + synthèse + export PDF synthèse)</p>
           </div>
           <button
             onClick={exportPDF}
             className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm shadow hover:bg-indigo-700"
-            title="Exporter tous les onglets en PDF"
+            title="Exporter SCCV + EURL en PDF"
           >
             Exporter en PDF
           </button>
@@ -423,16 +864,16 @@ export default function App() {
 
         {/* ===== Zone visible écran OU dossier PDF ===== */}
         <div ref={printableRef} className={exporting ? "pdf-mode" : ""}>
-          {/* styles spécifiques PDF */}
           {exporting && <style>{pdfStyles}</style>}
 
-          {/* Écran : ne rendre que l’onglet actif */}
           {!exporting && (
             <>
               {tab === "sccv" ? (
                 <CalculateurSCCV sccv={sccv} setSccv={setSccv} />
-              ) : (
+              ) : tab === "eurl" ? (
                 <CalculateurEURL eurl={eurl} setEurl={setEurl} sccvTravaux={sccvTravaux} />
+              ) : (
+                <TravauxTab />
               )}
               <footer className="mt-6 text-[11px] text-slate-500">
                 Accent principal: <span className="text-indigo-600 font-medium">indigo</span>. Fond: slate/zinc.
@@ -440,7 +881,7 @@ export default function App() {
             </>
           )}
 
-          {/* Export PDF : rendre TOUT */}
+          {/* Export PDF global (inchangé) */}
           {exporting && (
             <>
               <h1>Dossier SCCV / EURL – Synthèse</h1>
@@ -454,7 +895,8 @@ export default function App() {
               <CalculateurEURL eurl={eurl} setEurl={setEurl} sccvTravaux={sccvTravaux} />
 
               <div className="mt-6 text-[11px] text-slate-500">
-                Généré automatiquement – {new Date().toLocaleDateString("fr-FR")} {new Date().toLocaleTimeString("fr-FR", {hour:"2-digit",minute:"2-digit"})}
+                Généré automatiquement – {new Date().toLocaleDateString("fr-FR")}{" "}
+                {new Date().toLocaleTimeString("fr-FR", {hour:"2-digit",minute:"2-digit"})}
               </div>
             </>
           )}
