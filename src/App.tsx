@@ -5,8 +5,8 @@ import { Label } from "@/components/ui/label";
 import html2pdf from "html2pdf.js";
 
 /* -------------------------------------------------------
-   NOUVEL ONGLET : TRAVAUX (catalogue + chiffrage + synthèse)
-   - Colonnes A..J comme l’Excel "Chiffrage"
+   ONGLET : TRAVAUX (catalogue + chiffrage + synthèse)
+   - Colonnes A..J "Chiffrage"
    - Sous-poste dépend de Catégorie
    - Unité & Prix auto (Bas/Moyen/Haut ; "Par défaut" = Moyen)
    - Total HT, % du total, Synthèse + TVA/TTC
@@ -238,6 +238,7 @@ type ChiffrageRow = {
 type TravauxState = {
   rows: ChiffrageRow[];
   tva: number;            // 0.10 = 10%
+  synthComment?: string;  // commentaire global synthèse
 };
 
 const DEFAULT_PAR_DEFAUT: Level = "Moyen";
@@ -247,11 +248,13 @@ const DEFAULT_TVA = 0.10;
 function TravauxTab({
   travaux,
   setTravaux,
+  eurlPercents,
 }: {
   travaux: TravauxState;
   setTravaux: (t: TravauxState) => void;
+  eurlPercents: { matPct: number; moPct: number; caAutresPct: number };
 }) {
-  const { rows, tva } = travaux;
+  const { rows, tva, synthComment } = travaux;
 
   const totalHT = useMemo(
     () => rows.reduce((s, r) => s + (Number.isFinite(r.totalHT) ? r.totalHT : 0), 0),
@@ -350,29 +353,22 @@ function TravauxTab({
     await (html2pdf() as any).set(opt).from(el).save();
   };
 
-  // styles (COMPACT permanent)
+  // styles (COMPACT permanent) + alignement strict entêtes/ligne
   const t = "text-[10px]";
   const py = "py-1";
   const px = "px-1.5";
-  // colonnes compactées
-  const colsBase = "grid min-w-[980px] grid-cols-[13ch,20ch,6ch,7ch,11ch,8ch,12ch,9ch,13ch,1fr]";
-  const colsLg   = "lg:grid-cols-[14ch,22ch,7ch,8ch,12ch,9ch,13ch,10ch,14ch,1fr]";
+  const GRID_COLS = "grid min-w-[980px] grid-cols-[13ch,20ch,6ch,7ch,11ch,8ch,12ch,9ch,13ch,1fr] lg:grid-cols-[14ch,22ch,7ch,8ch,12ch,9ch,13ch,10ch,14ch,1fr]";
 
   return (
     <>
       <Card className="mb-4 shadow-sm border-slate-200 bg-white/90 backdrop-blur">
         <CardHeader className="pb-1">
           <CardTitle className="text-base font-semibold text-slate-900">
-            TRAVAUX – Chiffrage (compact)
+            TRAVAUX – Chiffrage
           </CardTitle>
 
           <div className="mt-2 grid grid-cols-3 gap-2">
-            <Num
-              label="TVA (taux)"
-              value={tva * 100}
-              suffix="%"
-              onChange={(v) => setTravaux({ ...travaux, tva: (v || 0) / 100 })}
-            />
+            <div />
             <div />
             <div className="flex items-end gap-2 justify-end">
               <button
@@ -393,10 +389,9 @@ function TravauxTab({
         </CardHeader>
 
         <CardContent className="pt-2">
-          {/* Wrapper scroll horizontal */}
           <div className="overflow-x-auto">
-            {/* En-têtes A..J */}
-            <div className={`${colsBase} ${colsLg} ${t} font-semibold text-slate-600 ${px}`}>
+            {/* En-têtes A..J (même grille que les lignes) */}
+            <div className={`${GRID_COLS} ${t} font-semibold text-slate-600 ${px}`}>
               <div className="sticky left-0 bg-white z-10 pr-2">Catégorie (A)</div>
               <div>Sous-poste (B)</div>
               <div>Unité (C)</div>
@@ -404,7 +399,7 @@ function TravauxTab({
               <div>Prix unitaire € (E)</div>
               <div>Coeff (F)</div>
               <div>Total HT € (G)</div>
-              <div>% total (H)</div>
+              <div>% du total (H)</div>
               <div>Niveau (I)</div>
               <div>Commentaires (J)</div>
             </div>
@@ -416,7 +411,7 @@ function TravauxTab({
                 return (
                   <div
                     key={i}
-                    className={`${colsBase} ${colsLg} items-center gap-1.5 bg-white rounded-lg border border-slate-200 ${px} ${py}`}
+                    className={`${GRID_COLS} items-center gap-1.5 bg-white rounded-lg border border-slate-200 ${px} ${py}`}
                   >
                     {/* Catégorie (sticky) */}
                     <div className="sticky left-0 bg-white z-10 pr-2">
@@ -573,7 +568,9 @@ function TravauxTab({
                     <td className="px-2 py-1" />
                   </tr>
                   <tr className="bg-slate-50">
-                    <td className="px-2 py-1 font-semibold">TVA</td>
+                    <td className="px-2 py-1 font-semibold">
+                      TVA <span className="text-slate-500">(taux {fmt(tva * 100)} %)</span>
+                    </td>
                     <td className="px-2 py-1 font-semibold">€ {fmt(ttva)}</td>
                     <td className="px-2 py-1" />
                   </tr>
@@ -586,11 +583,54 @@ function TravauxTab({
               </table>
             </div>
 
-            {/* KPIs */}
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              <Kpi label="TVA" value={`${fmt(tva * 100)} %`} />
-              <Kpi label="Total HT calculé" value={`€ ${fmt(totalHT)}`} />
-              <Kpi label="Total TTC" value={`€ ${fmt(ttc)}`} />
+            {/* Réglage TVA + KPIs + % MO/Matière/Frais/Total */}
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Réglage TVA déplacé ici */}
+              <div className="rounded-xl border border-slate-200 p-2 bg-white/70">
+                <div className="text-[10px] text-slate-600 mb-1">Réglages</div>
+                <div className="grid grid-cols-2 gap-2 items-end">
+                  <Num
+                    label="TVA (taux)"
+                    value={tva * 100}
+                    suffix="%"
+                    onChange={(v) => setTravaux({ ...travaux, tva: (v || 0) / 100 })}
+                  />
+                  <div className="text-[11px] text-slate-600">
+                    <div>Total HT : <span className="font-semibold text-slate-800">€ {fmt(totalHT)}</span></div>
+                    <div>Total TTC : <span className="font-semibold text-slate-800">€ {fmt(ttc)}</span></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* % Répartition issue de l'onglet EURL */}
+              <div className="rounded-xl border border-slate-200 p-2 bg-white/70">
+                <div className="text-[10px] text-slate-600 mb-1">Répartition EURL (pourcentages)</div>
+                <div className="grid grid-cols-4 gap-2">
+                  <Kpi label="% Matériaux" value={`${fmt(eurlPercents.matPct)} %`} />
+                  <Kpi label="% Main d'œuvre" value={`${fmt(eurlPercents.moPct)} %`} />
+                  <Kpi label="% Autres frais" value={`${fmt(eurlPercents.caAutresPct)} %`} />
+                  <Kpi
+                    label="% Total"
+                    value={`${fmt(
+                      (eurlPercents.matPct || 0) +
+                      (eurlPercents.moPct || 0) +
+                      (eurlPercents.caAutresPct || 0)
+                    )} %`}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Commentaire global synthèse */}
+            <div className="mt-3">
+              <Label className="text-[10px] text-slate-500">Commentaire (synthèse)</Label>
+              <textarea
+                className="w-full mt-1 rounded-md border border-slate-200 p-2 text-[12px] bg-white/70"
+                rows={3}
+                placeholder="Notes, hypothèses, réserves..."
+                value={synthComment ?? ""}
+                onChange={(e) => setTravaux({ ...travaux, synthComment: e.target.value })}
+              />
             </div>
           </div>
         </CardContent>
@@ -778,6 +818,7 @@ const DEFAULT_SCCV: SCCVState = {
 const DEFAULT_TRAVAUX: TravauxState = {
   rows: [{ qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, pct: 0, niveau: "Par défaut" }],
   tva: DEFAULT_TVA,
+  synthComment: "",
 };
 
 export default function App() {
@@ -854,7 +895,7 @@ export default function App() {
         <div className="flex items-center justify-between mb-3" data-html2canvas-ignore>
           <div>
             <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900">
-              Calculateur Rentabilité – SCCV / EURL / TRAVAUX
+              Calculette investissement immo
             </h1>
             <p className="text-[12px] text-slate-600">Version compacte – chiffrage + synthèse + export PDF synthèse</p>
           </div>
@@ -881,7 +922,11 @@ export default function App() {
               ) : tab === "eurl" ? (
                 <CalculateurEURL eurl={eurl} setEurl={setEurl} sccvTravaux={sccvTravaux} />
               ) : (
-                <TravauxTab travaux={travaux} setTravaux={setTravaux} />
+                <TravauxTab
+                  travaux={travaux}
+                  setTravaux={setTravaux}
+                  eurlPercents={{ matPct: eurl.matPct, moPct: eurl.moPct, caAutresPct: eurl.caAutresPct }}
+                />
               )}
               <footer className="mt-4 text-[10px] text-slate-500">
                 Accent principal: <span className="text-indigo-600 font-medium">indigo</span>. Fond: slate/zinc.
