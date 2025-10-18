@@ -151,24 +151,6 @@ const SHEET_ID = "1RqfPjc9r-jFrZksmYb5tOwTfjKbgY8Sx4BORMsVwZXo";
 const SHEET_GID = "1104107230";
 /*const SHEET_URL = "https://script.google.com/macros/s/AKfyc.../exec";*/
 const SHEET_CSV_URL =`https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
-useEffect(() => {
-  let cancelled = false;
-  (async () => {
-    try {
-      // Choisis la bonne URL selon ta méthode (CSV public ou Apps Script)
-      const res = await fetch(SHEET_CSV_URL); // ou SHEET_URL de l'Apps Script
-      if (!res.ok) throw new Error("http error");
-
-      // CSV -> parse ;    Apps Script -> .json()
-      const text = await res.text();
-      const parsed = parseCatalogueCsv(text); // <- ta fonction utilitaire
-      if (!cancelled && parsed.length) setCatalogue(parsed);
-    } catch (_e) {
-      // on garde le FALLBACK_CATALOGUE
-    }
-  })();
-  return () => { cancelled = true; };
-}, []);
 
 
 const FALLBACK_CATALOGUE: CatalogueItem[] = [
