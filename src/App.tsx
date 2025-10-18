@@ -62,11 +62,89 @@ type TravauxState = {
   tva: number; // ex: 0.10
 };
 
-/* ---------- Utils ---------- */
+/** Affichage formaté de nombres en FR */
 const fmt = (n: number) =>
   new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(
     Number.isFinite(n) ? n : 0
   );
+
+/** Champ numérique compact avec label + suffixe optionnel */
+function Num({
+  label,
+  value,
+  onChange,
+  suffix,
+  disabled,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  suffix?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="space-y-0.5">
+      <Label className="text-[10px] text-slate-500">{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Input
+          inputMode="decimal"
+          value={Number.isFinite(value) ? value : 0}
+          onChange={(e) =>
+            onChange(parseFloat(e.target.value.replace(",", ".")) || 0)
+          }
+          className={`bg-white/60 h-8 px-2 py-1 ${
+            disabled ? "opacity-60 cursor-not-allowed" : ""
+          }`}
+          disabled={disabled}
+          readOnly={disabled}
+        />
+        {suffix && (
+          <span className="text-[10px] text-slate-500 w-8 select-none">
+            {suffix}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Champ texte compact avec label */
+function TextField({
+  label,
+  value,
+  placeholder,
+  onChange,
+  readOnly,
+}: {
+  label: string;
+  value?: string;
+  placeholder?: string;
+  onChange: (v: string) => void;
+  readOnly?: boolean;
+}) {
+  return (
+    <div className="space-y-0.5">
+      <Label className="text-[10px] text-slate-500">{label}</Label>
+      <Input
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="bg-white/60 h-8 px-2 py-1"
+        readOnly={readOnly}
+      />
+    </div>
+  );
+}
+
+/** Petit KPI (étiquette + valeur) */
+function Kpi({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 p-2 text-[12px] bg-white/80">
+      <div className="text-slate-500 text-[10px] tracking-wide">{label}</div>
+      <div className="text-[13px] font-semibold text-slate-900">{value}</div>
+    </div>
+  );
+}
 
 /* ---------- Catalogue (live depuis Google Sheets) ---------- */
 const SHEET_ID = "1RqfPjc9r-jFrZksmYb5tOwTfjKbgY8Sx4BORMsVwZXo";
@@ -896,7 +974,7 @@ const runExcelExport = async () => {
             <div className="text-sm text-slate-600 mb-3">Choisis les pages à inclure :</div>
             <div className="space-y-2 text-sm">
               <label className="flex items-center gap-2">
-                <input type="checkbox" checked={targets.sccv} onChange={(e) => setTargets({ ...targets, sccv: e.target.checked })} />
+                <input type="checkbox" checked={targets.sccv} onChange={(e: { target: { checked: any; }; }) => setTargets({ ...targets, sccv: e.target.checked })} />
                 <span>SCCV – Marchand de biens</span>
               </label>
               <label className="flex items-center gap-2">
