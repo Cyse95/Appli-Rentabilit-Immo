@@ -1,14 +1,12 @@
-
 import type React from "react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/card";
 import { Input } from "./components/input";
 import { Label } from "./components/label";
-import html2pdf from "html2pdf.js";
+import ExportDialog from "./components/ExportDialog";
 import CalculateurEURL from "./tabs/EURLTab";
 import CalculateurSCCV from "./tabs/SCCVTab";
 import TravauxTab from "./tabs/TravauxTab";
-import ExportDialog from "./components/ExportDialog";
 
 /* -------------------------------------------------------
    Calculette investissement immo
@@ -20,6 +18,7 @@ import ExportDialog from "./components/ExportDialog";
 
 type TabKey = "sccv" | "eurl" | "travaux";
 type Level = "Bas" | "Moyen" | "Haut";
+
 export type EURLState = {
   url?: string;
   travaux: number;
@@ -150,9 +149,7 @@ function Kpi({ label, value }: { label: string; value: string }) {
 /* ---------- Catalogue (live depuis Google Sheets) ---------- */
 const SHEET_ID = "1RqfPjc9r-jFrZksmYb5tOwTfjKbgY8Sx4BORMsVwZXo";
 const SHEET_GID = "1104107230";
-/*const SHEET_URL = "https://script.google.com/macros/s/AKfyc.../exec";*/
-const SHEET_CSV_URL =`https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
-
+const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${SHEET_GID}`;
 
 const FALLBACK_CATALOGUE: CatalogueItem[] = [
   { categorie: "GROS ŒUVRE", sousPoste: "Démolition cloison simple", unite: "m²", prix: { bas: 10, moyen: 15, haut: 25 } },
@@ -161,7 +158,7 @@ const FALLBACK_CATALOGUE: CatalogueItem[] = [
   { categorie: "MENUISERIES", sousPoste: "Fenêtre PVC DV 120x135", unite: "U", prix: { bas: 350, moyen: 400, haut: 500 } },
 ];
 
-/* CSV parser robuste (gère ; , tab, guillets, accents, en-têtes variées) */
+/* CSV parser robuste (gère ; , tab, guillemets, accents, en-têtes variées) */
 function smartSplit(line: string): string[] {
   const out: string[] = [];
   let cur = "", inQ = false;
@@ -178,18 +175,22 @@ function smartSplit(line: string): string[] {
   return out.map((x) => x.trim());
 }
 const norm = (s: string) =>
-  s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "");
+  s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")   // ✅ compatible (pas de \p{Diacritic})
+    .replace(/\s+/g, "");
 
 function parseCatalogueCsv(csv: string): CatalogueItem[] {
-  const lines = csv.split(/\\r?\\n/).filter((l) => l.trim().length);
+  const lines = csv.split(/\r?\n/).filter((l) => l.trim().length);
   if (!lines.length) return [];
   const header = smartSplit(lines[0]).map(norm);
   const pos = (aliases: string[]) =>
     header.findIndex((h) => aliases.some((a) => h.includes(a)));
 
   const iCat = pos(["categorie", "category"]);
-  const iSous = pos(["sousposte", "sous-poste", "sousposte", "poste"]);
-  const iUnite = pos(["unite", "unite", "unité"]);
+  const iSous = pos(["sousposte", "sous-poste", "poste"]);
+  const iUnite = pos(["unite", "unité"]);
   const iBas = pos(["bas"]);
   const iMoy = pos(["moyen", "defaut", "moy"]);
   const iHaut = pos(["haut"]);
@@ -272,7 +273,7 @@ export default function App() {
         const parsed = parseCatalogueCsv(csv);
         if (!cancelled && parsed.length) setCatalogue(parsed);
       } catch {
-        // fallback silencieux : on conserve FALLBACK_CATALOGUE
+        // fallback : on conserve FALLBACK_CATALOGUE
       }
     })();
     return () => { cancelled = true; };
@@ -314,10 +315,7 @@ export default function App() {
   const sanitizeNode = (node: HTMLElement) => {
     node.querySelectorAll("input, textarea, select").forEach((el) => {
       const span = document.createElement("span");
-      const isInput = (el as HTMLInputElement).value !== undefined;
-      const value =
-        (el as HTMLInputElement).value ??
-        ((el as HTMLSelectElement).selectedOptions?.[0]?.text ?? "");
+      const value = (el as HTMLInputElement).value ?? ((el as HTMLSelectElement).selectedOptions?.[0]?.text ?? "");
       span.textContent = value || "";
       span.style.whiteSpace = "pre-wrap";
       el.parentElement?.replaceChild(span, el);
@@ -369,8 +367,10 @@ export default function App() {
     return wrap;
   };
 
-  // EXPORT PDF
+  // IMPORT DYNAMIQUE pour html2pdf.js
   const runPdfExport = async () => {
+    const { default: html2pdf } = await import("html2pdf.js");
+
     const wrap = document.createElement("div");
     wrap.style.padding = "16px";
     wrap.style.background = "#ffffff";
@@ -420,9 +420,9 @@ export default function App() {
   };
 
   const runExcelExport = async () => {
+    // lazy-load
     // @ts-ignore
-    const XLSX = await import("xlsx"); // lazy-load
-
+    const XLSX = await import("xlsx");
     const wb = XLSX.utils.book_new();
 
     // --- SCCV ---
@@ -518,8 +518,7 @@ export default function App() {
           setTargets={setTargets}
           includeExcel={includeExcel}
           setIncludeExcel={setIncludeExcel}
-          onExportPdf={runPdfExport}
-          onExportExcel={runExcelExport}
+          onConfirm={runExport}
           onClose={() => setShowExport(false)}
         />
       )}
@@ -552,15 +551,16 @@ export default function App() {
         </div>
 
         {/* Sections */}
-        {tab === "sccv" && (
+       <div className={tab === "sccv" ? "" : "hidden"}>
           <CalculateurSCCV
             sccv={sccv}
             setSccv={setSccv}
             cardRef={sccvRef}
             onExportClick={openExportSelector}
           />
-        )}
-        {tab === "eurl" && (
+        </div>
+
+        <div className={tab === "eurl" ? "" : "hidden"}>
           <CalculateurEURL
             eurl={eurl}
             setEurl={setEurl}
@@ -568,8 +568,9 @@ export default function App() {
             cardRef={eurlRef}
             onExportClick={openExportSelector}
           />
-        )}
-        {tab === "travaux" && (
+        </div>
+
+        <div className={tab === "travaux" ? "" : "hidden"}>
           <TravauxTab
             travaux={travaux}
             setTravaux={setTravaux}
@@ -578,7 +579,7 @@ export default function App() {
             chiffrageAnchorRef={travauxRef}
             synthRef={synthRef}
           />
-        )}
+        </div>
 
         <footer className="mt-4 text-[10px] text-slate-500">
           Accent principal :{" "}

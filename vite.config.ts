@@ -1,15 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-
-// chemin absolu vers ./src sans node:url
-const SRC = new URL('./src/', import.meta.url).pathname
+import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
-  base: '/appli-rentabilit-immo/',
+  base: './', // requis pour GH Pages (évite la page blanche)
   plugins: [react()],
   resolve: {
     alias: {
-      '@': SRC, // ex: import x from '@/components/x'
+      '@': fileURLToPath(new URL('./src', import.meta.url)), // aligne Vite sur tsconfig
     },
   },
 })

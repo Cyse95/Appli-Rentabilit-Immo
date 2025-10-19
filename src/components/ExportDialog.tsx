@@ -6,14 +6,13 @@ type Targets = { sccv: boolean; eurl: boolean; synth: boolean; travaux: boolean 
 export default function ExportDialog({
   targets, setTargets,
   includeExcel, setIncludeExcel,
-  onExportPdf, onExportExcel, onClose,
+  onConfirm, onClose,
 }: {
   targets: Targets;
   setTargets: (t: Targets) => void;
   includeExcel: boolean;
   setIncludeExcel: (v: boolean) => void;
-  onExportPdf: () => void;
-  onExportExcel: () => void;
+  onConfirm: () => void;
   onClose: () => void;
 }) {
   return (
@@ -22,7 +21,7 @@ export default function ExportDialog({
         <div className="text-lg font-semibold mb-2">Exporter</div>
 
         <div className="space-y-2 text-sm">
-          {([["sccv","SCCV"],["eurl","EURL"],["synth","TRAVAUX Synthèse"],["travaux","TRAVAUX Chiffrage"]] as [keyof Targets,string][]).map(([key,label]) => (
+          {([["sccv","SCCV"],["eurl","EURL"],["synth","TRAVAUX – Synthèse"],["travaux","TRAVAUX – Chiffrage"]] as [keyof Targets,string][]).map(([key,label]) => (
             <label key={key} className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -46,8 +45,7 @@ export default function ExportDialog({
 
         <div className="mt-4 flex justify-end gap-2">
           <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50" onClick={onClose}>Annuler</button>
-          <button className="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-sm" onClick={onExportPdf}>PDF</button>
-          <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm" onClick={onExportExcel}>Excel</button>
+          <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm" onClick={onConfirm}>Exporter</button>
         </div>
       </div>
     </div>
