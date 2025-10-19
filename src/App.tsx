@@ -1,8 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/card";
+import { Input } from "@/components/input";
+import { Label } from "@/components/label";
 import html2pdf from "html2pdf.js";
+import CalculateurEURL from "./tabs/EURLTab";
+import CalculateurSCCV from "./tabs/SCCVTab";
+import TravauxTab from "./tabs/TravauxTab";
+import ExportDialog from "./components/ExportDialog";
+
 
 /* -------------------------------------------------------
    Calculette investissement immo
@@ -14,8 +19,7 @@ import html2pdf from "html2pdf.js";
 
 type TabKey = "sccv" | "eurl" | "travaux";
 type Level = "Bas" | "Moyen" | "Haut";
-
-type EURLState = {
+export type EURLState = {
   url?: string;
   travaux: number;
   matPct: number;
@@ -24,8 +28,7 @@ type EURLState = {
   tauxIS: number;
   manualTravaux?: boolean;
 };
-
-type SCCVState = {
+export type SCCVState = {
   url?: string;
   bien: number;
   prixRenovM2: number;
@@ -37,16 +40,14 @@ type SCCVState = {
   fraisAgencePct: number;
   regimeHoldingPct: number;
 };
-
-type CatalogueItem = {
+export type CatalogueItem = {
   categorie: string;
   sousPoste: string;
   unite: string;
   prix: { bas: number; moyen: number; haut: number };
   note?: string;
 };
-
-type ChiffrageRow = {
+export type ChiffrageRow = {
   categorie?: string;
   sousPoste?: string;
   unite?: string;
@@ -56,8 +57,7 @@ type ChiffrageRow = {
   totalHT: number;
   commentaires?: string;
 };
-
-type TravauxState = {
+export type TravauxState = {
   rows: ChiffrageRow[];
   tva: number; // ex: 0.10
 };
@@ -212,488 +212,13 @@ function parseCatalogueCsv(csv: string): CatalogueItem[] {
 }
 
 /* ------------ TRAVAUX (drawer) ------------ */
-function TravauxTab({
-  travaux,
-  setTravaux,
-  catalogue,
-  openExportSelector,
-  chiffrageAnchorRef,
-  synthRef,
-}: {
-  travaux: TravauxState;
-  setTravaux: (t: TravauxState) => void;
-  catalogue: CatalogueItem[];
-  openExportSelector: () => void;
-  chiffrageAnchorRef: React.RefObject<HTMLDivElement>;
-  synthRef: React.RefObject<HTMLDivElement>;
-}) {
-  const { rows, tva } = travaux;
 
-  const CATS = useMemo(
-    () => Array.from(new Set(catalogue.map((c) => c.categorie))),
-    [catalogue]
-  );
-  const sousByCat = useMemo(() => {
-    const m: Record<string, CatalogueItem[]> = {};
-    catalogue.forEach((it) => (m[it.categorie] ||= []).push(it));
-    return m;
-  }, [catalogue]);
-
-  const totalHT = useMemo(
-    () => rows.reduce((s, r) => s + (Number.isFinite(r.totalHT) ? r.totalHT : 0), 0),
-    [rows]
-  );
-  const totalsByCat = useMemo(() => {
-    const map: Record<string, number> = {};
-    rows.forEach((r) => {
-      if (!r.categorie) return;
-      map[r.categorie] = (map[r.categorie] || 0) + (Number.isFinite(r.totalHT) ? r.totalHT : 0);
-    });
-    return map;
-  }, [rows]);
-  const ttva = useMemo(() => totalHT * tva, [totalHT, tva]);
-  const ttc = useMemo(() => totalHT + ttva, [totalHT, ttva]);
-
-  // Drawer
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [editIndex, setEditIndex] = useState<number | null>(null);
-  const emptyDraft: ChiffrageRow = { qte: 0, prixUnitaire: 0, coeffLocal: 1, totalHT: 0, commentaires: "" };
-  const [draft, setDraft] = useState<ChiffrageRow>(emptyDraft);
-
-  const openNew = () => { setEditIndex(null); setDraft(emptyDraft); setDrawerOpen(true); };
-  const openEdit = (i: number) => { setEditIndex(i); setDraft(rows[i]); setDrawerOpen(true); };
-  const closeDrawer = () => setDrawerOpen(false);
-
-  useEffect(() => {
-    if (!draft.categorie || !draft.sousPoste) return;
-    const item = sousByCat[draft.categorie]?.find((x) => x.sousPoste === draft.sousPoste);
-    if (!item) return;
-    const pu = item.prix.moyen || 0; // UNIQUEMENT prix moyen
-    const q = Number(draft.qte) || 0;
-    const k = Number(draft.coeffLocal) || 1;
-    setDraft((d) => ({ ...d, unite: item.unite, prixUnitaire: pu, totalHT: q * pu * k }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.categorie, draft.sousPoste, draft.qte, draft.coeffLocal]);
-
-  const saveDraft = () => {
-    const row = { ...draft };
-    if (editIndex === null) setTravaux({ ...travaux, rows: [...rows, row] });
-    else {
-      const copy = [...rows]; copy[editIndex] = row;
-      setTravaux({ ...travaux, rows: copy });
-    }
-    setDrawerOpen(false);
-  };
-
-  const removeRow = (i: number) =>
-    setTravaux({ ...travaux, rows: rows.filter((_, idx) => idx !== i) });
-
-  return (
-    <>
-      {/* CHIFFRAGE (liste minimaliste) */}
-      <div ref={chiffrageAnchorRef}>
-        <Card className="mb-4 shadow-sm border-slate-200 bg-white/90 backdrop-blur">
-          <CardHeader className="pb-1 flex items-center justify-between">
-            <div>
-              <CardTitle className="text-base font-semibold text-slate-900">
-                TRAVAUX – Chiffrage
-              </CardTitle>
-              <div className="mt-1 min-w-0 text-[12px] text-slate-600">
-                Lignes : <span className="font-semibold text-slate-800">{rows.length}</span>
-                <span className="ml-3">
-                  Total HT : <span className="font-semibold text-indigo-700">€ {fmt(totalHT)}</span>
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={openExportSelector}
-                className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs shadow hover:bg-indigo-700"
-                data-html2canvas-ignore
-                title="Export"
-              >
-                Export
-              </button>
-              <button
-                onClick={openNew}
-                className="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-slate-800 text-white text-sm hover:bg-slate-900"
-                data-html2canvas-ignore
-                aria-label="Ajouter une ligne"
-                title="Ajouter une ligne"
-              >
-                +
-              </button>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-2">
-            <div className="overflow-hidden rounded-lg border border-slate-200">
-              <table className="w-full text-[12px]">
-                <thead className="bg-slate-50 text-left text-slate-600">
-                  <tr>
-                    <th className="px-2 py-2 w-[28%]">Catégorie</th>
-                    <th className="px-2 py-2 w-[52%]">Sous-poste</th>
-                    <th className="px-2 py-2 w-[12%] text-right">Total HT (€)</th>
-                    <th className="px-2 py-2 w-[8%]"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={i} className="border-t hover:bg-slate-50">
-                      <td className="px-2 py-2">{r.categorie || "—"}</td>
-                      <td className="px-2 py-2">{r.sousPoste || "—"}</td>
-                      <td className="px-2 py-2 text-right">€ {fmt(r.totalHT)}</td>
-                      <td className="px-2 py-2 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            className="text-xs px-2 py-1 rounded-md border border-slate-200 hover:bg-slate-100"
-                            onClick={() => openEdit(i)}
-                            data-html2canvas-ignore
-                          >
-                            Éditer
-                          </button>
-                          <button
-                            className="text-xs px-2 py-1 rounded-md border border-slate-200 hover:bg-red-50 hover:border-red-300 text-red-600"
-                            onClick={() => removeRow(i)}
-                            data-html2canvas-ignore
-                          >
-                            Suppr.
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {rows.length === 0 && (
-                    <tr>
-                      <td className="px-2 py-4 text-slate-500" colSpan={4}>
-                        Aucune ligne. Clique sur “+” pour ajouter une ligne.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* SYNTHÈSE */}
-      <div ref={synthRef}>
-        <Card className="shadow-sm border-slate-200 bg-white/90 backdrop-blur">
-          <CardHeader className="pb-1">
-            <CardTitle className="text-base font-semibold text-slate-900">Synthèse</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-1.5">
-            <div id="travaux-synth">
-              <div className="overflow-x-auto">
-                <table className="w-full text-[12px] border-separate border-spacing-y-1">
-                  <thead>
-                    <tr className="text-left text-slate-600">
-                      <th className="px-2 py-1">Catégorie</th>
-                      <th className="px-2 py-1">Total HT (€)</th>
-                      <th className="px-2 py-1">% du total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {CATS.map((c) => {
-                      const val = totalsByCat[c] || 0;
-                      const pct = totalHT > 0 ? val / totalHT : 0;
-                      return (
-                        <tr key={c} className="bg-white rounded-xl">
-                          <td className="px-2 py-1">{c}</td>
-                          <td className="px-2 py-1 font-medium">€ {fmt(val)}</td>
-                          <td className="px-2 py-1">{fmt(pct * 100)} %</td>
-                        </tr>
-                      );
-                    })}
-                    <tr className="bg-slate-50">
-                      <td className="px-2 py-1 font-semibold">TOTAL TRAVAUX HT</td>
-                      <td className="px-2 py-1 font-semibold">€ {fmt(totalHT)}</td>
-                      <td className="px-2 py-1" />
-                    </tr>
-                    <tr className="bg-slate-50">
-                      <td className="px-2 py-1 font-semibold">TVA (taux)</td>
-                      <td className="px-2 py-1">
-                        <div className="flex items-center gap-2">
-                          <span>€ {fmt(ttva)}</span>
-                          <span className="text-slate-500 text-[11px]">
-                            (taux {fmt(travaux.tva * 100)} %)
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-2 py-1" />
-                    </tr>
-                    <tr className="bg-slate-100">
-                      <td className="px-2 py-1 font-semibold">TOTAL TTC</td>
-                      <td className="px-2 py-1 font-semibold">€ {fmt(ttc)}</td>
-                      <td className="px-2 py-1" />
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Drawer vertical (recentré, padding intérieur) */}
-      {drawerOpen && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center" data-html2canvas-ignore>
-    {/* Fond assombri */}
-    <div className="absolute inset-0 bg-black/40" onClick={closeDrawer} />
-
-    {/* Fenêtre centrée */}
-    <div className="relative bg-white rounded-2xl shadow-2xl w-[92vw] max-w-[560px] max-h-[86vh] overflow-y-auto p-6">
-      {/* En-tête */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-lg font-semibold">
-          {editIndex === null ? "Nouvelle ligne" : "Modifier la ligne"}
-        </div>
-        <button
-          className="px-3 py-1 text-sm rounded-md border border-slate-200 hover:bg-slate-50"
-          onClick={closeDrawer}
-        >
-          Fermer
-        </button>
-      </div>
-
-      {/* Formulaire */}
-      <div className="space-y-3">
-        {/* Catégorie */}
-        <div>
-          <Label className="text-xs text-slate-600">Catégorie</Label>
-          <select
-            className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
-            value={draft.categorie || ""}
-            onChange={(e) => {
-              const cat = e.target.value || undefined;
-              const firstSous = cat ? sousByCat[cat]?.[0]?.sousPoste : undefined;
-              setDraft((d) => ({
-                ...d,
-                categorie: cat,
-                sousPoste: firstSous,
-                commentaires: d.commentaires || "",
-              }));
-            }}
-          >
-            <option value="">—</option>
-            {CATS.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Sous-poste */}
-        <div>
-          <Label className="text-xs text-slate-600">Sous-poste</Label>
-          <select
-            className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
-            value={draft.sousPoste || ""}
-            onChange={(e) => setDraft((d) => ({ ...d, sousPoste: e.target.value || undefined }))}
-            disabled={!draft.categorie}
-          >
-            <option value="">{draft.categorie ? "—" : "Choisir catégorie"}</option>
-            {(draft.categorie ? sousByCat[draft.categorie] || [] : []).map((sp) => (
-              <option key={sp.sousPoste} value={sp.sousPoste}>{sp.sousPoste}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* Quantités */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Num
-            label="Quantité"
-            value={draft.qte}
-            onChange={(v) => setDraft((d) => ({ ...d, qte: v }))}
-          />
-          <Num
-            label="Coeff. local"
-            value={draft.coeffLocal ?? 1}
-            onChange={(v) => setDraft((d) => ({ ...d, coeffLocal: v || 1 }))}
-          />
-        </div>
-
-        {/* Auto (lecture seule) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <TextField label="Unité (auto)" value={draft.unite || ""} onChange={() => {}} />
-          <TextField label="Prix unitaire (moyen, auto)" value={String(draft.prixUnitaire || 0)} onChange={() => {}} />
-          <TextField label="Total HT (auto)" value={`€ ${fmt(draft.totalHT)}`} onChange={() => {}} />
-        </div>
-
-        {/* Commentaires */}
-        <div>
-          <Label className="text-xs text-slate-600">Commentaires</Label>
-          <Input
-            className="bg-white/60 h-10 px-3"
-            value={draft.commentaires ?? ""}
-            onChange={(e) => setDraft((d) => ({ ...d, commentaires: e.target.value }))}
-            placeholder="Notes internes, précisions..."
-          />
-        </div>
-
-        {/* Actions */}
-        <div className="mt-2 flex justify-end gap-2">
-          <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50" onClick={closeDrawer}>
-            Annuler
-          </button>
-          <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" onClick={saveDraft}>
-            Enregistrer
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-)}
-    </>
-  );
-}
 
 /* ------------ EURL ------------ */
-function CalculateurEURL({
-  eurl,
-  setEurl,
-  sccvTravaux,
-  cardRef,
-  onExportClick,
-}: {
-  eurl: EURLState;
-  setEurl: (s: EURLState) => void;
-  sccvTravaux: number;
-  cardRef: React.RefObject<HTMLDivElement>;
-  onExportClick: () => void; // <= même fonction partout
-}) {
-  const caTotal = useMemo(() => eurl.travaux, [eurl.travaux]);
-  const coutMat = useMemo(() => (eurl.travaux * eurl.matPct) / 100, [eurl.travaux, eurl.matPct]);
-  const coutMO = useMemo(() => (eurl.travaux * eurl.moPct) / 100, [eurl.travaux, eurl.moPct]);
-  const coutAutres = useMemo(() => (eurl.travaux * eurl.caAutresPct) / 100, [eurl.travaux, eurl.caAutresPct]);
-  const benefBrut = useMemo(() => caTotal - (coutMat + coutMO + coutAutres), [caTotal, coutMat, coutMO, coutAutres]);
-  const impots = useMemo(() => Math.max(benefBrut, 0) * (eurl.tauxIS / 100), [benefBrut, eurl.tauxIS]);
-  const benefNet = useMemo(() => benefBrut - impots, [benefBrut, impots]);
 
-  useEffect(() => {
-    if (!eurl.manualTravaux && eurl.travaux !== sccvTravaux) {
-      setEurl({ ...eurl, travaux: sccvTravaux });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sccvTravaux, eurl.manualTravaux]);
-
-  return (
-    <div ref={cardRef}>
-      <Card className="mb-4 shadow-sm border-slate-200 bg-white/90 backdrop-blur">
-        <CardHeader className="pb-1 flex items-center justify-between">
-          <CardTitle className="text-base font-semibold text-slate-900">
-            EURL – Rentabilité brute
-          </CardTitle>
-          <button
-            onClick={onExportClick}
-            className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs shadow hover:bg-indigo-700"
-            data-html2canvas-ignore
-            title="Export"
-          >
-            Export
-          </button>
-        </CardHeader>
-        <CardContent className="pt-2">
-          <div className="grid grid-cols-2 gap-2">
-            <Num
-              label={`Chiffre d'affaires (Travaux)${eurl.manualTravaux ? "" : " – répliqué SCCV"}`}
-              value={eurl.travaux}
-              suffix="€"
-              disabled={!eurl.manualTravaux}
-              onChange={(v) => setEurl({ ...eurl, travaux: v })}
-            />
-            <Num label="% Matériaux" value={eurl.matPct} suffix="%" onChange={(v) => setEurl({ ...eurl, matPct: v })}/>
-            <Num label="% Main d'œuvre" value={eurl.moPct} suffix="%" onChange={(v) => setEurl({ ...eurl, moPct: v })}/>
-            <Num label="% Autres frais" value={eurl.caAutresPct} suffix="%" onChange={(v) => setEurl({ ...eurl, caAutresPct: v })}/>
-            <Num label="Taux IS" value={eurl.tauxIS} suffix="%" onChange={(v) => setEurl({ ...eurl, tauxIS: v })}/>
-            <Kpi label="Coût matériaux" value={`€ ${fmt(coutMat)}`} />
-            <Kpi label="Coût main d'œuvre" value={`€ ${fmt(coutMO)}`} />
-            <Kpi label="Autres coûts" value={`€ ${fmt(coutAutres)}`} />
-            <Kpi label="Bénéfice brut" value={`€ ${fmt(benefBrut)}`} />
-            <Kpi label="Impôts IS" value={`€ ${fmt(impots)}`} />
-            <Kpi label="Bénéfice net" value={`€ ${fmt(benefNet)}`} />
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
 
 /* ------------ SCCV ------------ */
-function CalculateurSCCV({
-  sccv,
-  setSccv,
-  cardRef,
-  onExportClick,
-}: {
-  sccv: SCCVState;
-  setSccv: (s: SCCVState) => void;
-  cardRef: React.RefObject<HTMLDivElement>;
-  onExportClick: () => void; // <= même fonction partout
-}) {
-  const travaux = useMemo(() => sccv.prixRenovM2 * sccv.surfaceM2, [sccv.prixRenovM2, sccv.surfaceM2]);
-  const base = useMemo(() => sccv.bien + travaux, [sccv.bien, travaux]);
-  const apport = useMemo(() => (sccv.apportPct / 100) * base, [sccv.apportPct, base]);
-  const chargeCredit = useMemo(() => (base - apport) * (sccv.chargeCreditPct / 100), [base, apport, sccv.chargeCreditPct]);
-  const fraisDossier = useMemo(() => (base - apport) * (sccv.fraisDossierPct / 100), [base, apport, sccv.fraisDossierPct]);
-  const fraisAgence = useMemo(() => base * (sccv.fraisAgencePct / 100), [base, sccv.fraisAgencePct]);
-  const coutProjet = useMemo(() => sccv.bien + travaux + fraisAgence + fraisDossier + chargeCredit, [sccv.bien, travaux, fraisAgence, fraisDossier, chargeCredit]);
-  const totalApresApport = useMemo(() => coutProjet - apport, [coutProjet, apport]);
 
-  const prixRevente = useMemo(() => sccv.surfaceM2 * sccv.prixReventeM2, [sccv.surfaceM2, sccv.prixReventeM2]);
-  const benefBrut = useMemo(() => prixRevente - coutProjet + apport, [prixRevente, coutProjet, apport]);
-  const is15 = useMemo(() => Math.min(Math.max(benefBrut, 0), 42500) * 0.15, [benefBrut]);
-  const is25 = useMemo(() => Math.max(benefBrut - 42500, 0) * 0.25, [benefBrut]);
-  const impotsIS = useMemo(() => is15 + is25, [is15, is25]);
-  const netRevente = useMemo(() => benefBrut - impotsIS, [benefBrut, impotsIS]);
-  const tresorerieHolding = useMemo(() => netRevente * (1 - sccv.regimeHoldingPct / 100), [netRevente, sccv.regimeHoldingPct]);
-
-  const rendementBrutGlobal = useMemo(() => (benefBrut / totalApresApport) * 100, [benefBrut, totalApresApport]);
-  const rendementNetGlobal = useMemo(() => (netRevente / totalApresApport) * 100, [netRevente, totalApresApport]);
-  const rendementApport = useMemo(() => (apport > 0 ? (netRevente / apport) * 100 : 0), [netRevente, apport]);
-
-  return (
-    <div ref={cardRef}>
-      <Card className="mb-4 shadow-sm border-slate-200 bg-white/90 backdrop-blur">
-        <CardHeader className="pb-1 flex items-center justify-between">
-          <CardTitle className="text-base font-semibold text-slate-900">
-            SCCV – Marchand de biens
-          </CardTitle>
-          <button
-            onClick={onExportClick}
-            className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs shadow hover:bg-indigo-700"
-            data-html2canvas-ignore
-            title="Export"
-          >
-            Export
-          </button>
-        </CardHeader>
-        <CardContent className="pt-2">
-          <div className="grid grid-cols-2 gap-2">
-            <Num label="Prix d'achat (Bien)" value={sccv.bien} suffix="€" onChange={(v) => setSccv({ ...sccv, bien: v })}/>
-            <Num label="Prix rénovation (€/m²)" value={sccv.prixRenovM2} suffix="€" onChange={(v) => setSccv({ ...sccv, prixRenovM2: v })}/>
-            <Num label="Surface" value={sccv.surfaceM2} suffix="m²" onChange={(v) => setSccv({ ...sccv, surfaceM2: v })}/>
-            <Num label="Prix revente (€/m²)" value={sccv.prixReventeM2} suffix="€" onChange={(v) => setSccv({ ...sccv, prixReventeM2: v })}/>
-            <Num label="Apport" value={sccv.apportPct} suffix="%" onChange={(v) => setSccv({ ...sccv, apportPct: v })}/>
-            <Num label="Charge crédit" value={sccv.chargeCreditPct} suffix="%" onChange={(v) => setSccv({ ...sccv, chargeCreditPct: v })}/>
-            <Num label="Frais dossier" value={sccv.fraisDossierPct} suffix="%" onChange={(v) => setSccv({ ...sccv, fraisDossierPct: v })}/>
-            <Num label="Frais d'agence" value={sccv.fraisAgencePct} suffix="%" onChange={(v) => setSccv({ ...sccv, fraisAgencePct: v })}/>
-            <Num label="Régime mère-fille holding" value={sccv.regimeHoldingPct} suffix="%" onChange={(v) => setSccv({ ...sccv, regimeHoldingPct: v })}/>
-            <Kpi label="Travaux (calculés)" value={`€ ${fmt(travaux)}`} />
-            <Kpi label="Coût projet (après apport)" value={`€ ${fmt(totalApresApport)}`} />
-            <Kpi label="Prix de revente" value={`€ ${fmt(prixRevente)}`} />
-            <Kpi label="Marge brute (base IS)" value={`€ ${fmt(benefBrut)}`} />
-            <Kpi label="IS total" value={`€ ${fmt(impotsIS)}`} />
-            <Kpi label="Net à la revente" value={`€ ${fmt(netRevente)}`} />
-            <Kpi label="Trésorerie holding" value={`€ ${fmt(tresorerieHolding)}`} />
-            <Kpi label="Rdt brut projet" value={`${fmt(rendementBrutGlobal)} %`} />
-            <Kpi label="Rdt net projet" value={`${fmt(rendementNetGlobal)} %`} />
-            <Kpi label="Net sur apport" value={`${fmt(rendementApport)} %`} />
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
 
 /* -------------------- App -------------------- */
 const DEFAULT_EURL: EURLState = {
@@ -774,22 +299,22 @@ useEffect(() => {
   // ---------- EXPORT central (même pour tous les boutons) ----------
   const sccvRef = useRef<HTMLDivElement>(null);
   const eurlRef = useRef<HTMLDivElement>(null);
-  const travauxChiffrageRef = useRef<HTMLDivElement>(null);
-  const travauxSynthRef = useRef<HTMLDivElement>(null);
+  const travauxRef = useRef<HTMLDivElement>(null);
+  const synthRef = useRef<HTMLDivElement>(null);
 
-  type ExportTargets = {
+  type Targets = {
     sccv: boolean;
     eurl: boolean;
-    travauxSynth: boolean;
-    travauxChiffrage: boolean;
+    synth: boolean;
+    travaux: boolean;
   };
-  const defaultTargetsByTab: Record<TabKey, ExportTargets> = {
-    sccv: { sccv: true, eurl: false, travauxSynth: false, travauxChiffrage: false },
-    eurl: { sccv: false, eurl: true, travauxSynth: false, travauxChiffrage: false },
-    travaux: { sccv: false, eurl: false, travauxSynth: true, travauxChiffrage: true },
+  const defaultTargetsByTab: Record<TabKey, Targets> = {
+    sccv: { sccv: true, eurl: false, synth: false, travaux: false },
+    eurl: { sccv: false, eurl: true, synth: false, travaux: false },
+    travaux: { sccv: false, eurl: false, synth: true, travaux: true },
   };
   const [showExport, setShowExport] = useState(false);
-  const [targets, setTargets] = useState<ExportTargets>(defaultTargetsByTab[tab]);
+  const [targets, setTargets] = useState<Targets>(defaultTargetsByTab[tab]);
   useEffect(() => { setTargets(defaultTargetsByTab[tab]); }, [tab]);
 
   const openExportSelector = () => setShowExport(true);
@@ -859,7 +384,7 @@ useEffect(() => {
     wrap.style.padding = "16px";
     wrap.style.background = "#ffffff";
 
-    const addCloned = (ref?: React.RefObject<HTMLDivElement>, title?: string, sanitize = true) => {
+    const addCloned = (ref?: RefObject<HTMLDivElement>, title?: string, sanitize = true) => {
       if (!ref?.current) return;
       const page = document.createElement("div");
       page.style.pageBreakAfter = "always";
@@ -877,8 +402,8 @@ useEffect(() => {
 
     if (targets.sccv) addCloned(sccvRef, "SCCV – Marchand de biens");
     if (targets.eurl) addCloned(eurlRef, "EURL – Rentabilité brute");
-    if (targets.travauxSynth) addCloned(travauxSynthRef, "TRAVAUX – Synthèse");
-    if (targets.travauxChiffrage) {
+    if (targets.synth) addCloned(synthRef, "TRAVAUX – Synthèse");
+    if (targets.travaux) {
       const page = document.createElement("div");
       page.style.pageBreakAfter = "always";
       const h = document.createElement("h1");
@@ -904,6 +429,7 @@ useEffect(() => {
   };
 
 const runExcelExport = async () => {
+  // @ts-ignore
   const XLSX = await import("xlsx"); // lazy-load
 
   const wb = XLSX.utils.book_new();
@@ -996,48 +522,26 @@ const runExcelExport = async () => {
   // UI du sélecteur (même pour tous)
   const [includeExcel, setIncludeExcel] = useState(true);
 
-   return (
+     return (
     <div className="min-h-screen p-5 md:p-7 bg-gradient-to-b from-slate-50 to-zinc-100 text-slate-900">
       {/* Dialog export (commun) */}
       {showExport && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" data-html2canvas-ignore>
-          <div className="bg-white rounded-2xl shadow-xl w-[380px] p-4">
-            <div className="text-lg font-semibold text-slate-900 mb-2">Export</div>
-            <div className="text-sm text-slate-600 mb-3">Choisis les pages à inclure :</div>
-            <div className="space-y-2 text-sm">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={targets.sccv} onChange={(e: { target: { checked: any; }; }) => setTargets({ ...targets, sccv: e.target.checked })} />
-                <span>SCCV – Marchand de biens</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={targets.eurl} onChange={(e) => setTargets({ ...targets, eurl: e.target.checked })} />
-                <span>EURL – Rentabilité brute</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={targets.travauxSynth} onChange={(e) => setTargets({ ...targets, travauxSynth: e.target.checked })} />
-                <span>TRAVAUX – Synthèse</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={targets.travauxChiffrage} onChange={(e) => setTargets({ ...targets, travauxChiffrage: e.target.checked })} />
-                <span>TRAVAUX – Chiffrage</span>
-              </label>
-            </div>
-            <div className="mt-4 border-t pt-3">
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={includeExcel} onChange={(e) => setIncludeExcel(e.target.checked)} />
-                <span>Inclure un export Excel (avec formules, 1 onglet/section)</span>
-              </label>
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50" onClick={() => setShowExport(false)}>Annuler</button>
-              <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" onClick={runExport}>Export</button>
-            </div>
-          </div>
-        </div>
+        <ExportDialog
+          targets={targets}
+          setTargets={setTargets}
+          includeExcel={includeExcel}
+          setIncludeExcel={setIncludeExcel}
+          onExportPdf={runPdfExport}
+          onExportExcel={runExcelExport}
+          onClose={() => setShowExport(false)}
+        />
       )}
 
       <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-3" data-html2canvas-ignore>
+        <div
+          className="flex items-center justify-between mb-3"
+          data-html2canvas-ignore
+        >
           <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900">
             Calculette investissement immo
           </h1>
@@ -1045,12 +549,13 @@ const runExcelExport = async () => {
 
         {/* Tabs */}
         <div className="flex gap-2 mb-3" data-html2canvas-ignore>
-          {(["sccv","eurl","travaux"] as TabKey[]).map((k) => (
+          {(["sccv", "eurl", "travaux"] as TabKey[]).map((k) => (
             <button
               key={k}
               className={`px-3 py-1.5 rounded-lg text-sm transition-colors border ${
-                tab === k ? "bg-indigo-600 text-white border-indigo-600 shadow"
-                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                tab === k
+                  ? "bg-indigo-600 text-white border-indigo-600 shadow"
+                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
               }`}
               onClick={() => setTab(k)}
             >
@@ -1083,13 +588,15 @@ const runExcelExport = async () => {
             setTravaux={setTravaux}
             catalogue={catalogue}
             openExportSelector={openExportSelector}
-            chiffrageAnchorRef={travauxChiffrageRef}
-            synthRef={travauxSynthRef}
+            chiffrageAnchorRef={travauxRef}
+            synthRef={synthRef}
           />
         )}
 
         <footer className="mt-4 text-[10px] text-slate-500">
-          Accent principal: <span className="text-indigo-600 font-medium">indigo</span>. Fond: slate/zinc.
+          Accent principal :{" "}
+          <span className="text-indigo-600 font-medium">indigo</span>. Fond :
+          slate/zinc.
         </footer>
       </div>
     </div>
