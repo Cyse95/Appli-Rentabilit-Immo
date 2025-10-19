@@ -1,9 +1,9 @@
 
 import type React from "react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/card";
-import { Input } from "@/components/input";
-import { Label } from "@/components/label";
+import { Card, CardContent, CardHeader, CardTitle } from "./components/card";
+import { Input } from "./components/input";
+import { Label } from "./components/label";
 import html2pdf from "html2pdf.js";
 import CalculateurEURL from "./tabs/EURLTab";
 import CalculateurSCCV from "./tabs/SCCVTab";

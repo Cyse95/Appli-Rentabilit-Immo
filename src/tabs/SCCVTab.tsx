@@ -1,8 +1,8 @@
 
 import type React from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/card";
-import { Input } from "@/components/input";
-import { Label } from "@/components/label";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/card";
+import { Input } from "../components/input";
+import { Label } from "../components/label";
 import type { SCCVState } from "../App";
 
 type Props = {

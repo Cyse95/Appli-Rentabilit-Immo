@@ -1,9 +1,9 @@
 
 import type React from "react";
 import { forwardRef } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/card";
-import { Input } from "@/components/input";
-import { Label } from "@/components/label";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/card";
+import { Input } from "../components/input";
+import { Label } from "../components/label";
 import type { EURLState } from "../App";
 
 type Props = {
