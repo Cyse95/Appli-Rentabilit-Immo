@@ -1,9 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { fileURLToPath, URL } from 'node:url'
+
+// chemin absolu vers ./src sans node:url
+const SRC = new URL('./src/', import.meta.url).pathname
 
 export default defineConfig({
+  base: '/appli-rentabilit-immo/',
   plugins: [react()],
-  base: '/Appli-Rentabilit-Immo/',
-  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
+  resolve: {
+    alias: {
+      '@': SRC, // ex: import x from '@/components/x'
+    },
+  },
 })

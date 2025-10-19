@@ -8,7 +8,6 @@ import CalculateurSCCV from "./tabs/SCCVTab";
 import TravauxTab from "./tabs/TravauxTab";
 import ExportDialog from "./components/ExportDialog";
 
-
 /* -------------------------------------------------------
    Calculette investissement immo
    - Onglets : SCCV / EURL / TRAVAUX (chiffrage via drawer)
