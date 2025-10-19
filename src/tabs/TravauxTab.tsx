@@ -1,3 +1,5 @@
+
+import type React from "react";
 import { useMemo, useState, useEffect, type RefObject } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/card";
 import { Input } from "@/components/input";
@@ -32,7 +34,7 @@ function Num({
           type="number"
           className="w-full border rounded-md px-2 py-1"
           value={isFinite(value) ? value : 0}
-          onChange={(e) => onChange(parseFloat(e.target.value || "0"))}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(parseFloat(e.target.value || "0"))}
           disabled={disabled}
         />
         {suffix && <span className="text-slate-500">{suffix}</span>}
@@ -59,7 +61,7 @@ function TextField({
       <input
         className="w-full border rounded-md px-2 py-1 bg-white/60"
         value={value}
-        onChange={(e) => onChange?.(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange?.(e.target.value)}
         readOnly={readOnly}
       />
     </label>
@@ -181,12 +183,12 @@ export default function TravauxTab({
                 TRAVAUX – Chiffrage
               </CardTitle>
               <div className="mt-1 min-w-0 text-[12px] text-slate-600">
-                Lignes :{" "}
+                Lignes:{" "}
                 <span className="font-semibold text-slate-800">
                   {rows.length}
                 </span>
                 <span className="ml-3">
-                  Total HT :{" "}
+                  Total HT:{" "}
                   <span className="font-semibold text-indigo-700">
                     € {fmt(totalHT)}
                   </span>
@@ -290,6 +292,7 @@ export default function TravauxTab({
                   <tbody>
                     {CATS.map((c) => {
                       const val = totalsByCat[c] || 0;
+                      if (val === 0) return null; // n'afficher que les catégories présentes
                       const pct = totalHT > 0 ? val / totalHT : 0;
                       return (
                         <tr key={c} className="bg-white rounded-xl">
@@ -362,7 +365,7 @@ export default function TravauxTab({
                 <select
                   className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
                   value={draft.categorie || ""}
-                  onChange={(e) => {
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
                     const cat = e.target.value || undefined;
                     const firstSous = cat
                       ? sousByCat[cat]?.[0]?.sousPoste
@@ -390,7 +393,7 @@ export default function TravauxTab({
                 <select
                   className="w-full rounded-md border border-slate-200 px-2 py-2 text-sm bg-white"
                   value={draft.sousPoste || ""}
-                  onChange={(e) =>
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
                     setDraft((d: ChiffrageRow) => ({
                       ...d,
                       sousPoste: e.target.value || undefined,
@@ -451,7 +454,7 @@ export default function TravauxTab({
                 <Input
                   className="bg-white/60 h-10 px-3"
                   value={draft.commentaires ?? ""}
-                  onChange={(e) =>
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                     setDraft((d: ChiffrageRow) => ({
                       ...d,
                       commentaires: e.target.value,

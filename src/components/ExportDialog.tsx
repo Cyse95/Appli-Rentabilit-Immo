@@ -1,48 +1,53 @@
 
-type Targets = { sccv: boolean; eurl: boolean; travaux: boolean; synth: boolean };
+import type React from "react";
+
+type Targets = { sccv: boolean; eurl: boolean; synth: boolean; travaux: boolean };
+
 export default function ExportDialog({
-  targets, setTargets, includeExcel, setIncludeExcel, onExportPdf, onExportExcel, onClose
+  targets, setTargets,
+  includeExcel, setIncludeExcel,
+  onExportPdf, onExportExcel, onClose,
 }: {
   targets: Targets;
-  setTargets: (t: Targets)=>void;
+  setTargets: (t: Targets) => void;
   includeExcel: boolean;
-  setIncludeExcel: (v: boolean)=>void;
-  onExportPdf: ()=>void;
-  onExportExcel: ()=>void;
-  onClose: ()=>void;
+  setIncludeExcel: (v: boolean) => void;
+  onExportPdf: () => void;
+  onExportExcel: () => void;
+  onClose: () => void;
 }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" data-html2canvas-ignore>
       <div className="bg-white rounded-2xl shadow-xl w-[380px] p-4">
-        <div className="text-lg font-semibold text-slate-900 mb-2">Export</div>
-        <div className="text-sm text-slate-600 mb-3">Choisis les pages à inclure :</div>
+        <div className="text-lg font-semibold mb-2">Exporter</div>
+
         <div className="space-y-2 text-sm">
+          {([["sccv","SCCV"],["eurl","EURL"],["synth","TRAVAUX Synthèse"],["travaux","TRAVAUX Chiffrage"]] as [keyof Targets,string][]).map(([key,label]) => (
+            <label key={key} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={targets[key]}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTargets({ ...targets, [key]: e.target.checked })}
+              />
+              {label}
+            </label>
+          ))}
+
+          <hr className="my-2"/>
           <label className="flex items-center gap-2">
-            <input type="checkbox" checked={targets.sccv} onChange={(e)=>setTargets({ ...targets, sccv: e.target.checked })} />
-            <span>SCCV – Marchand de biens</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={targets.eurl} onChange={(e)=>setTargets({ ...targets, eurl: e.target.checked })} />
-            <span>EURL – Rentabilité brute</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={targets.travaux} onChange={(e)=>setTargets({ ...targets, travaux: e.target.checked })} />
-            <span>Travaux – Chiffrage</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={targets.synth} onChange={(e)=>setTargets({ ...targets, synth: e.target.checked })} />
-            <span>Synthèse</span>
+            <input
+              type="checkbox"
+              checked={includeExcel}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setIncludeExcel(e.target.checked)}
+            />
+            Export Excel en plus du PDF
           </label>
         </div>
-        <div className="mt-3 flex items-center justify-between">
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={includeExcel} onChange={(e)=>setIncludeExcel(e.target.checked)} />
-            <span>Inclure Excel</span>
-          </label>
-          <div className="flex gap-2">
-            <button className="px-3 py-1.5 rounded-md bg-slate-100" onClick={onClose}>Annuler</button>
-            <button className="px-3 py-1.5 rounded-md bg-slate-900 text-white" onClick={()=>{ onExportPdf(); if (includeExcel) onExportExcel(); }}>Exporter</button>
-          </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50" onClick={onClose}>Annuler</button>
+          <button className="px-3 py-1.5 rounded-lg bg-slate-800 text-white text-sm" onClick={onExportPdf}>PDF</button>
+          <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm" onClick={onExportExcel}>Excel</button>
         </div>
       </div>
     </div>

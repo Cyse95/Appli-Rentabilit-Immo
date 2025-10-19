@@ -1,3 +1,5 @@
+
+import type React from "react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/card";
 import { Input } from "@/components/input";
@@ -88,7 +90,7 @@ function Num({
         <Input
           inputMode="decimal"
           value={Number.isFinite(value) ? value : 0}
-          onChange={(e) =>
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
             onChange(parseFloat(e.target.value.replace(",", ".")) || 0)
           }
           className={`bg-white/60 h-8 px-2 py-1 ${
@@ -126,7 +128,7 @@ function TextField({
       <Label className="text-[10px] text-slate-500">{label}</Label>
       <Input
         value={value ?? ""}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
         placeholder={placeholder}
         className="bg-white/60 h-8 px-2 py-1"
         readOnly={readOnly}
@@ -176,10 +178,10 @@ function smartSplit(line: string): string[] {
   return out.map((x) => x.trim());
 }
 const norm = (s: string) =>
-  s.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/\s+/g, "");
+  s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "");
 
 function parseCatalogueCsv(csv: string): CatalogueItem[] {
-  const lines = csv.split(/\r?\n/).filter((l) => l.trim().length);
+  const lines = csv.split(/\\r?\\n/).filter((l) => l.trim().length);
   if (!lines.length) return [];
   const header = smartSplit(lines[0]).map(norm);
   const pos = (aliases: string[]) =>
@@ -209,15 +211,6 @@ function parseCatalogueCsv(csv: string): CatalogueItem[] {
   }
   return out;
 }
-
-/* ------------ TRAVAUX (drawer) ------------ */
-
-
-/* ------------ EURL ------------ */
-
-
-/* ------------ SCCV ------------ */
-
 
 /* -------------------- App -------------------- */
 const DEFAULT_EURL: EURLState = {
@@ -266,25 +259,24 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem("calc:sccv", JSON.stringify(sccv)); } catch {} }, [sccv]);
   useEffect(() => { try { localStorage.setItem("calc:travaux", JSON.stringify(travaux)); } catch {} }, [travaux]);
   useEffect(() => { try { localStorage.setItem("calc:tab", tab); } catch {} }, [tab]);
-// ---- Catalogue (state + fetch) ----
-const [catalogue, setCatalogue] = useState<CatalogueItem[]>(FALLBACK_CATALOGUE);
 
-useEffect(() => {
-  let cancelled = false;
-  (async () => {
-    try {
-      const res = await fetch(SHEET_CSV_URL, { method: "GET" });
-      if (!res.ok) throw new Error("http error");
-      const csv = await res.text();
-      const parsed = parseCatalogueCsv(csv);
-      if (!cancelled && parsed.length) setCatalogue(parsed);
-    } catch {
-      // fallback silencieux : on conserve FALLBACK_CATALOGUE
-    }
-  })();
-  return () => { cancelled = true; };
-}, []);
-
+  // ---- Catalogue (state + fetch) ----
+  const [catalogue, setCatalogue] = useState<CatalogueItem[]>(FALLBACK_CATALOGUE);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(SHEET_CSV_URL, { method: "GET" });
+        if (!res.ok) throw new Error("http error");
+        const csv = await res.text();
+        const parsed = parseCatalogueCsv(csv);
+        if (!cancelled && parsed.length) setCatalogue(parsed);
+      } catch {
+        // fallback silencieux : on conserve FALLBACK_CATALOGUE
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Lien SCCV → EURL (CA travaux)
   const sccvTravaux = useMemo(() => sccv.prixRenovM2 * sccv.surfaceM2, [sccv.prixRenovM2, sccv.surfaceM2]);
@@ -427,101 +419,97 @@ useEffect(() => {
     await (html2pdf() as any).set(opt).from(wrap).save();
   };
 
-const runExcelExport = async () => {
-  // @ts-ignore
-  const XLSX = await import("xlsx"); // lazy-load
+  const runExcelExport = async () => {
+    // @ts-ignore
+    const XLSX = await import("xlsx"); // lazy-load
 
-  const wb = XLSX.utils.book_new();
+    const wb = XLSX.utils.book_new();
 
-  // --- SCCV ---
-  {
-    const rows = [
-      ["Paramètre", "Valeur", "Unité"],
-      ["Prix d'achat (Bien)", sccv.bien, "€"],
-      ["Prix rénovation (€/m²)", sccv.prixRenovM2, "€"],
-      ["Surface", sccv.surfaceM2, "m²"],
-      ["Prix revente (€/m²)", sccv.prixReventeM2, "€"],
-      ["Apport (%)", sccv.apportPct, "%"],
-      ["Charge crédit (%)", sccv.chargeCreditPct, "%"],
-      ["Frais dossier (%)", sccv.fraisDossierPct, "%"],
-      ["Frais agence (%)", sccv.fraisAgencePct, "%"],
-      ["Régime holding (%)", sccv.regimeHoldingPct, "%"],
-      [],
-      ["Travaux (€) = PrixRenov/m² * Surface", { f: "B3*B4" }],
-      ["Base (€) = Bien + Travaux", { f: "B2+B12" }],
-      ["Apport (€) = % * Base", { f: "B6/100*B13" }],
-      ["Charge crédit (€) = (Base-Apport)*%", { f: "(B13-B14)*B7/100" }],
-      ["Frais dossier (€) = (Base-Apport)*%", { f: "(B13-B14)*B8/100" }],
-      ["Frais agence (€) = Base*%", { f: "B13*B9/100" }],
-      ["Coût projet (€) = Bien + Travaux + Agence + Dossier + Crédit", { f: "B2+B12+B16+B15+B14" }],
-      ["Total après apport (€) = Coût - Apport", { f: "B17-B14" }],
-      ["Prix revente (€) = Surface*PrixRev/m²", { f: "B4*B5" }],
-      ["Marge brute (€) = Revente - Coût + Apport", { f: "B19-B17+B14" }],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(rows as any);
-    XLSX.utils.book_append_sheet(wb, ws, "SCCV");
-  }
-
-  // --- EURL ---
-  {
-    const rows = [
-      ["Paramètre", "Valeur", "Unité"],
-      ["CA (Travaux) €", eurl.travaux, "€"],
-      ["% Matériaux", eurl.matPct, "%"],
-      ["% Main d'œuvre", eurl.moPct, "%"],
-      ["% Autres frais", eurl.caAutresPct, "%"],
-      ["Taux IS (%)", eurl.tauxIS, "%"],
-      [],
-      ["Coût matériaux (€)", { f: "B2*B3/100" }],
-      ["Coût MO (€)", { f: "B2*B4/100" }],
-      ["Autres coûts (€)", { f: "B2*B5/100" }],
-      ["Bénéfice brut (€)", { f: "B2-(B8+B9+B10)" }],
-      ["Impôts IS (€)", { f: "MAX(B11,0)*B6/100" }],
-      ["Bénéfice net (€)", { f: "B11-B12" }],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(rows as any);
-    XLSX.utils.book_append_sheet(wb, ws, "EURL");
-  }
-
-  // --- TRAVAUX ---
-  {
-    const header = ["Catégorie","Sous-poste","Unité","Qté","Prix unitaire (€)","Coeff","Total (€)","Commentaires"];
-    const body = travaux.rows.map((r) => [
-      r.categorie ?? "",
-      r.sousPoste ?? "",
-      r.unite ?? "",
-      r.qte || 0,
-      r.prixUnitaire || 0,
-      r.coeffLocal || 1,
-      null, // formule G
-      r.commentaires ?? "",
-    ]);
-    const ws = XLSX.utils.aoa_to_sheet([header, ...body] as any);
-    for (let i = 0; i < body.length; i++) {
-      const rowIndex = 2 + i;
-      const cell = XLSX.utils.encode_cell({ r: i + 1, c: 6 }); // col G
-      (ws as any)[cell] = { t: "n", f: `D${rowIndex}*E${rowIndex}*F${rowIndex}` };
+    // --- SCCV ---
+    {
+      const rows = [
+        ["Paramètre", "Valeur", "Unité"],
+        ["Prix d'achat (Bien)", sccv.bien, "€"],
+        ["Prix rénovation (€/m²)", sccv.prixRenovM2, "€"],
+        ["Surface", sccv.surfaceM2, "m²"],
+        ["Prix revente (€/m²)", sccv.prixReventeM2, "€"],
+        ["Apport (%)", sccv.apportPct, "%"],
+        ["Charge crédit (%)", sccv.chargeCreditPct, "%"],
+        ["Frais dossier (%)", sccv.fraisDossierPct, "%"],
+        ["Frais agence (%)", sccv.fraisAgencePct, "%"],
+        ["Régime holding (%)", sccv.regimeHoldingPct, "%"],
+        [],
+        ["Travaux (€) = PrixRenov/m² * Surface", { f: "B3*B4" }],
+        ["Base (€) = Bien + Travaux", { f: "B2+B12" }],
+        ["Apport (€) = % * Base", { f: "B6/100*B13" }],
+        ["Charge crédit (€) = (Base-Apport)*%", { f: "(B13-B14)*B7/100" }],
+        ["Frais dossier (€) = (Base-Apport)*%", { f: "(B13-B14)*B8/100" }],
+        ["Frais agence (€) = Base*%", { f: "B13*B9/100" }],
+        ["Coût projet (€) = Bien + Travaux + Agence + Dossier + Crédit", { f: "B2+B12+B16+B15+B14" }],
+        ["Total après apport (€) = Coût - Apport", { f: "B17-B14" }],
+        ["Prix revente (€) = Surface*PrixRev/m²", { f: "B4*B5" }],
+        ["Marge brute (€) = Revente - Coût + Apport", { f: "B19-B17+B14" }],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows as any);
+      XLSX.utils.book_append_sheet(wb, ws, "SCCV");
     }
-    XLSX.utils.book_append_sheet(wb, ws, "TRAVAUX");
-  }
 
-  XLSX.writeFile(wb, "Export_Calculette_Immo.xlsx");
-};
+    // --- EURL ---
+    {
+      const rows = [
+        ["Paramètre", "Valeur", "Unité"],
+        ["CA (Travaux) €", eurl.travaux, "€"],
+        ["% Matériaux", eurl.matPct, "%"],
+        ["% Main d'œuvre", eurl.moPct, "%"],
+        ["% Autres frais", eurl.caAutresPct, "%"],
+        ["Taux IS (%)", eurl.tauxIS, "%"],
+        [],
+        ["Coût matériaux (€)", { f: "B2*B3/100" }],
+        ["Coût MO (€)", { f: "B2*B4/100" }],
+        ["Autres coûts (€)", { f: "B2*B5/100" }],
+        ["Bénéfice brut (€)", { f: "B2-(B8+B9+B10)" }],
+        ["Impôts IS (€)", { f: "MAX(B11,0)*B6/100" }],
+        ["Bénéfice net (€)", { f: "B11-B12" }],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows as any);
+      XLSX.utils.book_append_sheet(wb, ws, "EURL");
+    }
 
+    // --- TRAVAUX ---
+    {
+      const header = ["Catégorie","Sous-poste","Unité","Qté","Prix unitaire (€)","Coeff","Total (€)","Commentaires"];
+      const body = travaux.rows.map((r) => [
+        r.categorie ?? "",
+        r.sousPoste ?? "",
+        r.unite ?? "",
+        r.qte || 0,
+        r.prixUnitaire || 0,
+        r.coeffLocal || 1,
+        null, // formule G
+        r.commentaires ?? "",
+      ]);
+      const ws = XLSX.utils.aoa_to_sheet([header, ...body] as any);
+      for (let i = 0; i < body.length; i++) {
+        const rowIndex = 2 + i;
+        const cell = XLSX.utils.encode_cell({ r: i + 1, c: 6 }); // col G
+        (ws as any)[cell] = { t: "n", f: `D${rowIndex}*E${rowIndex}*F${rowIndex}` };
+      }
+      XLSX.utils.book_append_sheet(wb, ws, "TRAVAUX");
+    }
+
+    XLSX.writeFile(wb, "Export_Calculette_Immo.xlsx");
+  };
 
   const runExport = async () => {
     setShowExport(false);
-    // On lance PDF puis Excel si l’utilisateur a choisi Excel
-    // (ici, on laisse toujours le choix dans le sélecteur ci-dessous)
     await runPdfExport();
-    // Excel optionnel : checkbox ci-dessous
     if (includeExcel) runExcelExport();
   };
 
   // UI du sélecteur (même pour tous)
   const [includeExcel, setIncludeExcel] = useState(true);
 
-     return (
+  return (
     <div className="min-h-screen p-5 md:p-7 bg-gradient-to-b from-slate-50 to-zinc-100 text-slate-900">
       {/* Dialog export (commun) */}
       {showExport && (
