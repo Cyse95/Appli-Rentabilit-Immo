@@ -2,8 +2,8 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [ main ]           # ← ajuste si ta branche par défaut n'est pas "main"
-  workflow_dispatch:
+    branches: ['**']        # build sur toutes les branches
+  workflow_dispatch:         # lancement manuel possible
 
 permissions:
   contents: read
@@ -19,40 +19,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
-
-      # Si tu n'as PAS de package-lock.json, remplace "npm ci" par "npm i"
-      - name: Install deps
-        run: |
+      - run: |
           if [ -f package-lock.json ]; then npm ci; else npm i; fi
-
-      - name: Build
-        run: npm run build
-
-      # Fallback SPA pour GitHub Pages (évite 404 côté client)
-      - name: Add SPA fallback
+      - run: npm run build
+      - name: SPA fallback (404.html)
         run: cp dist/index.html dist/404.html
-
-      - name: Upload build as artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
+    if: github.ref == 'refs/heads/main'   # ✅ déploie SEULEMENT si push sur main
     needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - uses: actions/configure-pages@v5
+      - id: deployment
         uses: actions/deploy-pages@v4
